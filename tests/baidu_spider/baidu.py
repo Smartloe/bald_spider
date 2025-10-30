@@ -1,16 +1,4 @@
-import requests
-from bald_spider.core.engine import Engine
+from bald_spider.spider import Spider
 
-
-class BaiduSpider:
-    start_url = "https://www.baidu.com"
-
-    def start_requests(self):
-        response = requests.get(self.start_url)
-        print(response)
-
-
-if __name__ == "__main__":
-    baidu_spider = BaiduSpider()
-    engine = Engine()
-    engine.start_spider(baidu_spider)
+class BaiduSpider(Spider):
+    start_urls = ["https://www.baidu.com","https://www.baidu.com"]
