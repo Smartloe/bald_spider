@@ -2,12 +2,6 @@
 Tests for the main module of bald_spider
 """
 
-import sys
-import os
-
-# Add the src directory to the Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 from bald_spider.main import main
 
 

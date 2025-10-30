@@ -6,13 +6,17 @@ A Python web scraping framework built with modern Python tooling.
 
 ```
 bald_spider/
-├── src/
-│   └── bald_spider/
-│       ├── __init__.py
-│       └── main.py
+├── bald_spider/
+│   ├── __init__.py
+│   ├── main.py
+│   └── core/
+│       └── engine.py
 ├── tests/
 │   ├── __init__.py
-│   └── test_main.py
+│   ├── test_main.py
+│   └── baidu_spider/
+│       ├── __init__.py
+│       └── baidu.py
 ├── pyproject.toml
 ├── uv.lock
 ├── .gitignore
