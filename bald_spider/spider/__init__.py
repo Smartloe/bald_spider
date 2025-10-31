@@ -7,6 +7,6 @@ class Spider:
         if self.start_urls:
             for url in self.start_urls:
                 yield url
-            else:
-                if hasattr(self, "start_url") and isinstance(getattr(self, "start_url"), str):
-                    yield getattr(self, "start_url")
+        else:
+            if hasattr(self, "start_url") and isinstance(getattr(self, "start_url"), str):
+                yield getattr(self, "start_url")
