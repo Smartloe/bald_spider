@@ -7,6 +7,7 @@ from bald_spider.http.request import Request
 from bald_spider.spider import Spider
 from inspect import iscoroutine
 from bald_spider.utils.spider import transform
+from bald_spider.task_manager import TaskManager
 
 
 class Engine:
@@ -15,6 +16,7 @@ class Engine:
         self.start_requests: Optional[Generator] = None
         self.spider: Optional[Scheduler] = None
         self.scheduler: Optional[Scheduler] = None
+        self.task_manager: TaskManager = TaskManager()
         self.running = False
 
     async def start_spider(self, spider):
@@ -64,7 +66,8 @@ class Engine:
             if outputs:
                 await self._handle_spider_output(outputs)
 
-        asyncio.create_task(crawl_task(), name="crawl")
+        # asyncio.create_task(crawl_task())
+        self.task_manager.create_task(crawl_task())
 
     async def _fetch(self, request):
         async def _success(_response):
@@ -99,9 +102,6 @@ class Engine:
                 raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
 
     async def _exit(self):
-        if self.scheduler.idle() and self.downloader.idle():
+        if self.scheduler.idle() and self.downloader.idle() and self.task_manager.all_done():
             return True
-        for task in asyncio.all_tasks():
-            if not task.done() and task.get_name == "crawl":
-                return False
-        return True 
+        return False
