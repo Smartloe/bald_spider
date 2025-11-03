@@ -15,3 +15,9 @@ class Scheduler:
 
     async def enqueue_request(self, request):
         await self.request_queue.put(request)
+
+    def idle(self) -> bool:
+        """检查调度器是否空闲"""
+        if self.request_queue is None:
+            return True
+        return self.request_queue.empty()

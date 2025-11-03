@@ -22,3 +22,6 @@ class Request:
         self.cookie = cookie
         self.proxy = proxy
         self.body = body
+
+    def __lt__(slef, other):
+        return slef.priority < other.priority

@@ -2,10 +2,10 @@ from bald_spider.core.downloader import Downloader
 from bald_spider.core.scheduler import Scheduler
 from typing import Optional, Generator, Callable
 import asyncio
-from bald_spider.exceptions import TransformTypeError
+from bald_spider.exceptions import OutputError, TransformTypeError
+from bald_spider.http.request import Request
 from bald_spider.spider import Spider
 from inspect import iscoroutine
-
 from bald_spider.utils.spider import transform
 
 
@@ -15,8 +15,10 @@ class Engine:
         self.start_requests: Optional[Generator] = None
         self.spider: Optional[Scheduler] = None
         self.scheduler: Optional[Scheduler] = None
+        self.running = False
 
     async def start_spider(self, spider):
+        self.running = True
         self.spider = spider
         self.scheduler = Scheduler()
         if hasattr(self.scheduler, "open"):
@@ -32,7 +34,7 @@ class Engine:
 
     async def crawl(self):
         """主逻辑"""
-        while True:
+        while self.running:
             request = await self._get_next_request()
             if request is not None:
                 await self._crawl(request)
@@ -43,18 +45,26 @@ class Engine:
                 except StopIteration:
                     self.start_requests = None
                 except Exception as e:
-                    break
+                    # 1.发起请求的task运行完毕
+                    # 2.调度器是否空闲
+                    # 3.下载器是否空闲
+                    if not await self._exit():
+                        continue
+
+                    self.running = False
                 else:
                     # 入队
                     await self.enqueue_request(start_request)
 
     async def _crawl(self, request):
         # todo 实现并发
-        outputs = await self._fetch(request)
-        # 处理outputs
-        if outputs:
-            async for output in outputs:
-                print(output)
+        async def crawl_task():
+            outputs = await self._fetch(request)
+            # 处理outputs
+            if outputs:
+                await self._handle_spider_output(outputs)
+
+        asyncio.create_task(crawl_task(), name="crawl")
 
     async def _fetch(self, request):
         async def _success(_response):
@@ -79,3 +89,19 @@ class Engine:
 
     async def _get_next_request(self):
         return await self.scheduler.next_request()
+
+    async def _handle_spider_output(self, outputs):
+        async for spider_output in outputs:
+            if isinstance(spider_output, Request):
+                await self.enqueue_request(spider_output)
+            # todo 判断是否为数据,暂定为Item
+            else:
+                raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
+
+    async def _exit(self):
+        if self.scheduler.idle() and self.downloader.idle():
+            return True
+        for task in asyncio.all_tasks():
+            if not task.done() and task.get_name == "crawl":
+                return False
+        return True 
