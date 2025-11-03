@@ -59,7 +59,7 @@ class Engine:
                     await self.enqueue_request(start_request)
 
     async def _crawl(self, request):
-        # todo 实现并发
+        # 实现并发
         async def crawl_task():
             outputs = await self._fetch(request)
             # 处理outputs
@@ -67,6 +67,7 @@ class Engine:
                 await self._handle_spider_output(outputs)
 
         # asyncio.create_task(crawl_task())
+        await self.task_manager.semaphore.acquire()
         self.task_manager.create_task(crawl_task())
 
     async def _fetch(self, request):
