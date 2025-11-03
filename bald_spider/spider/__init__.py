@@ -1,3 +1,6 @@
+from bald_spider.http.request import Request
+
+
 class Spider:
     def __init__(self):
         if not hasattr(self, "start_urls"):
@@ -6,7 +9,10 @@ class Spider:
     def start_requests(self):
         if self.start_urls:
             for url in self.start_urls:
-                yield url
+                yield Request(url=url)
         else:
             if hasattr(self, "start_url") and isinstance(getattr(self, "start_url"), str):
-                yield getattr(self, "start_url")
+                yield Request(getattr(self, "start_url"))
+
+    def parse(self, response):
+        raise NotImplemented

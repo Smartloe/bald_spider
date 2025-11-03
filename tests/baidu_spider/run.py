@@ -1,6 +1,11 @@
 import asyncio
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from bald_spider.core.engine import Engine
-from baidu import BaiduSpider
+from tests.baidu_spider.baidu import BaiduSpider
 
 
 async def run():

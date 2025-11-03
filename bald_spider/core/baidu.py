@@ -1,5 +1,13 @@
-class BaiduSpider:
-    start_url = "https://www.baidu.com"
+from bald_spider.spider import Spider
+from bald_spider.http.request import Request
 
-    def start_requests(self):
-        return self.start_url
+
+class BaiduSpider:
+    start_urls = ["https://www.baidu.com"]
+
+    async def pasre(self, response):
+        print("parse", response)
+        for i in range(10):
+            url = "https://www.baidu.com"
+            request = Request(url=url)
+            yield request
