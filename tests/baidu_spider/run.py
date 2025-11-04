@@ -1,6 +1,6 @@
 import asyncio
 from bald_spider.core.engine import Engine
-from tests.baidu_spider.baidu import BaiduSpider
+from tests.baidu_spider.spiders.baidu import BaiduSpider
 from bald_spider.utils.project import get_settings
 from bald_spider.settings.settins_manager import SettingsManager
 
