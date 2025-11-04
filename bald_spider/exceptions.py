@@ -1,6 +1,6 @@
 class TransformTypeError(TypeError):
-    pass
+	pass
 
 
 class OutputError(Exception):
-    pass
+	pass
