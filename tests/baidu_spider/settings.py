@@ -1,2 +1,3 @@
 PROJECT_NAME = "baidu_spider"
 TEST = 331
+CONCURRENCY = 16

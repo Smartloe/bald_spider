@@ -11,12 +11,14 @@ from bald_spider.task_manager import TaskManager
 
 
 class Engine:
-    def __init__(self):
+    def __init__(self, crawler):
+        self.crawler = crawler
+        self.settings = crawler.settings
         self.downloader: Optional[Downloader] = None
         self.start_requests: Optional[Generator] = None
         self.spider: Optional[Scheduler] = None
         self.scheduler: Optional[Scheduler] = None
-        self.task_manager: TaskManager = TaskManager()
+        self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
         self.running = False
 
     async def start_spider(self, spider):

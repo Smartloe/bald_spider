@@ -1,6 +1,10 @@
 class TransformTypeError(TypeError):
-	pass
+    pass
 
 
 class OutputError(Exception):
-	pass
+    pass
+
+
+class SpiderTypeError(TypeError):
+    pass

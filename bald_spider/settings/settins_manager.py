@@ -1,3 +1,4 @@
+from copy import deepcopy
 from importlib import import_module
 from bald_spider.settings import default_settings
 from collections.abc import MutableMapping
@@ -107,3 +108,6 @@ class SettingsManager(MutableMapping):
         if values is not None:
             for key, value in values.items():
                 self.set(key, value)
+
+    def copy(self):
+        return deepcopy(self)
