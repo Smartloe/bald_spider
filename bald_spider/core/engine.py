@@ -90,7 +90,7 @@ class Engine:
         await self._schedule_request(request)
 
     async def _schedule_request(self, request):
-        # todo 去重
+        # TODO 去重
         await self.scheduler.enqueue_request(request)
 
     async def _get_next_request(self):
@@ -100,7 +100,7 @@ class Engine:
         async for spider_output in outputs:
             if isinstance(spider_output, Request):
                 await self.enqueue_request(spider_output)
-            # todo 判断是否为数据,暂定为Item
+            # TODO 判断是否为数据,暂定为Item
             else:
                 raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
 
