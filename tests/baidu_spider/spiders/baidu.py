@@ -1,6 +1,7 @@
 from bald_spider.http.request import Request
 from bald_spider.spider import Spider
 import asyncio
+from tests.baidu_spider.items import BaiduItem
 
 
 class BaiduSpider(Spider):
@@ -36,14 +37,14 @@ class BaiduSpider2(Spider):
     custom_settings = {"CONCURRENCY": 32}
 
     async def parse(self, response):
-        print(f"parse2 {response}")
+        # print(f"parse2 {response}")
         for i in range(10):
             url = "https://www.baidu.com"
             request = Request(url, callback=self.parse_page)
             yield request
 
     def parse_page(self, response):
-        print("parse_page2", response)
+        # print("parse_page2", response)
         for i in range(10):
             url = "https://www.baidu.com"
             request = Request(url, callback=self.parse_detail)

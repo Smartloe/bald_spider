@@ -4,6 +4,7 @@ from typing import Optional, Generator, Callable
 import asyncio
 from bald_spider.exceptions import OutputError, TransformTypeError
 from bald_spider.http.request import Request
+from bald_spider.items.items import Item
 from bald_spider.spider import Spider
 from inspect import iscoroutine
 from bald_spider.utils.spider import transform
@@ -101,6 +102,8 @@ class Engine:
             if isinstance(spider_output, Request):
                 await self.enqueue_request(spider_output)
             # TODO 判断是否为数据,暂定为Item
+            elif isinstance(spider_output,Item):
+                pass
             else:
                 raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
 

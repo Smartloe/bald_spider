@@ -1,0 +1,2 @@
+class BaiduItem:
+    pass
