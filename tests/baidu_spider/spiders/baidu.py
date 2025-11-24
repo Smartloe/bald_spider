@@ -51,4 +51,9 @@ class BaiduSpider2(Spider):
             yield request
 
     def parse_detail(self, response):
-        print("parse_detail2", response)
+        # print("parse_detail2", response)
+        item = BaiduItem()
+        item["url"] = "www.baidu.com"
+        item["title"] = "百度首页"
+        # item["aaa"] = "百度首页"
+        yield item
