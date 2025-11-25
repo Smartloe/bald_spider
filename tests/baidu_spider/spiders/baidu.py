@@ -56,4 +56,3 @@ class BaiduSpider2(Spider):
         item["url"] = "www.baidu.com"
         item["title"] = "百度首页"
         # item["aaa"] = "百度首页"
-        yield item
