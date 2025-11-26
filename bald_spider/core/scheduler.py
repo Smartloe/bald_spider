@@ -1,10 +1,10 @@
-from typing import Optional
+
 from bald_spider.utils.pqueue import SpoderPriorityQueue
 
 
 class Scheduler:
 	def __init__(self):
-		self.request_queue: Optional[SpoderPriorityQueue] = None
+		self.request_queue: SpoderPriorityQueue | None = None
 
 	def open(self):
 		self.request_queue = SpoderPriorityQueue()

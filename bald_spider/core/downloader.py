@@ -1,7 +1,6 @@
-import requests
-import time
 import asyncio
 import random
+
 
 
 class Downloader:

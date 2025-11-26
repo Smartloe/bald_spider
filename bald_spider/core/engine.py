@@ -1,6 +1,8 @@
 from bald_spider.core.downloader import Downloader
+from bald_spider.core.processor import Processor
 from bald_spider.core.scheduler import Scheduler
-from typing import Optional, Generator, Callable
+from collections.abc import Generator
+from typing import Callable
 import asyncio
 from bald_spider.exceptions import OutputError, TransformTypeError
 from bald_spider.http.request import Request
@@ -9,26 +11,31 @@ from bald_spider.spider import Spider
 from inspect import iscoroutine
 from bald_spider.utils.spider import transform
 from bald_spider.task_manager import TaskManager
+from bald_spider.utils.log import get_logger
 
 
 class Engine:
     def __init__(self, crawler):
+        self.logger = get_logger(self.__class__.__name__)
         self.crawler = crawler
         self.settings = crawler.settings
-        self.downloader: Optional[Downloader] = None
-        self.start_requests: Optional[Generator] = None
-        self.spider: Optional[Scheduler] = None
-        self.scheduler: Optional[Scheduler] = None
+        self.downloader: Downloader | None = None
+        self.start_requests: Generator | None = None
+        self.spider: Scheduler | None = None
+        self.scheduler: Scheduler | None = None
+        self.processor: Processor | None = None
         self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
         self.running = False
 
     async def start_spider(self, spider):
         self.running = True
+        self.logger.info(f"info bald_spider started.(project_name:{self.settings.get('PROJECT_NAME')})")
         self.spider = spider
         self.scheduler = Scheduler()
         if hasattr(self.scheduler, "open"):
             self.scheduler.open()
         self.downloader = Downloader()
+        self.processor = Processor(self.crawler)
         self.start_requests = iter(spider.start_requests())
         await self._open_spider()
 
@@ -45,10 +52,11 @@ class Engine:
                 await self._crawl(request)
             else:
                 try:
-                    start_request = next(self.start_requests)  # noqa
+                    start_request = next(self.start_requests) 
 
                 except StopIteration:
                     self.start_requests = None
+
                 except Exception as e:
                     # 1.发起请求的task运行完毕
                     # 2.调度器是否空闲
@@ -57,6 +65,8 @@ class Engine:
                         continue
 
                     self.running = False
+                    if self.start_requests is not None:
+                        self.logger.error(f"Error during start_requests: {e}")
                 else:
                     # 入队
                     await self.enqueue_request(start_request)
@@ -99,15 +109,12 @@ class Engine:
 
     async def _handle_spider_output(self, outputs):
         async for spider_output in outputs:
-            if isinstance(spider_output, Request):
-                await self.enqueue_request(spider_output)
-            # TODO 判断是否为数据,暂定为Item
-            elif isinstance(spider_output,Item):
-                pass
+            if isinstance(spider_output, (Request, Item)):
+                await self.processor.enqueue(spider_output)
             else:
                 raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
 
     async def _exit(self):
-        if self.scheduler.idle() and self.downloader.idle() and self.task_manager.all_done():
+        if self.scheduler.idle() and self.downloader.idle() and self.task_manager.all_done() and self.processor.idle():
             return True
         return False

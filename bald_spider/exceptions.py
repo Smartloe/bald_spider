@@ -8,3 +8,15 @@ class OutputError(Exception):
 
 class SpiderTypeError(TypeError):
     pass
+
+
+class ItemInError(Exception):
+    pass
+
+
+class ItemAttribuError(Exception):
+    pass
+
+
+class DecodeError(Exception):
+    pass
