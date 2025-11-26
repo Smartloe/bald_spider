@@ -1,3 +1,5 @@
+from tkinter import N
+from token import OP
 from typing import Dict, Callable
 
 
@@ -14,6 +16,7 @@ class Request:
         proxy: Dict | None = None,
         body="",
         encoding="utf-8",
+        meta: Dict | None = None,
     ):
         self.url = url
         self.headers = headers
@@ -24,8 +27,14 @@ class Request:
         self.proxy = proxy
         self.body = body
         self.encoding = encoding
+        self._meta = meta if meta is not None else {}
 
-	def __str__(self):
-		return f" {self.url} {self.method}"
+    def __str__(self):
+        return f" {self.url} {self.method}"
+
     def __lt__(slef, other):
         return slef.priority < other.priority
+
+    @property
+    def meta(self):
+        return self._meta

@@ -2,6 +2,7 @@ from typing import Dict
 from bald_spider import Request
 import ujson
 import re
+from parsel import Selector
 from urllib.parse import urljoin as _urljoin
 from bald_spider.exceptions import DecodeError
 
@@ -23,6 +24,7 @@ class Response:
         self.status_code = status_code
         self.encoding = request.encoding
         self._text_cache = None
+        self._selector = None
 
     @property
     def text(self):
@@ -44,8 +46,20 @@ class Response:
                 raise UnicodeDecodeError(exc.encoding, exc.object, exc.start, exc.end, f"{self.request}")
         return self._text_cache
 
+    def xpath(self, xpath_sting):
+        if self._selector is None:
+            self._selector = Selector(self.text)
+        return self._selector.xpath(xpath_sting)
+
     def json(self):
         return ujson.loads(self.text)
 
     def urljoin(self, url):
         return _urljoin(self.url, url)
+
+    def __str__(self):
+        return f"<Response {self.status_code} {self.url}>"
+
+    @property
+    def meta(self):
+        return self.request.meta
