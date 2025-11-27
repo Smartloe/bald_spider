@@ -4,10 +4,9 @@ from bald_spider.core.scheduler import Scheduler
 from collections.abc import Generator
 from typing import Callable
 import asyncio
-from bald_spider.exceptions import OutputError, TransformTypeError
+from bald_spider.exceptions import OutputError
 from bald_spider.http.request import Request
 from bald_spider.items.items import Item
-from bald_spider.spider import Spider
 from inspect import iscoroutine
 from bald_spider.utils.spider import transform
 from bald_spider.task_manager import TaskManager
@@ -34,7 +33,9 @@ class Engine:
         self.scheduler = Scheduler()
         if hasattr(self.scheduler, "open"):
             self.scheduler.open()
-        self.downloader = Downloader()
+        self.downloader = Downloader(self.crawler)
+        if hasattr(self.downloader, "open"):
+            self.downloader.open()
         self.processor = Processor(self.crawler)
         self.start_requests = iter(spider.start_requests())
         await self._open_spider()
@@ -52,8 +53,7 @@ class Engine:
                 await self._crawl(request)
             else:
                 try:
-                    start_request = next(self.start_requests) 
-
+                    start_request = next(self.start_requests)
                 except StopIteration:
                     self.start_requests = None
 
@@ -70,6 +70,8 @@ class Engine:
                 else:
                     # 入队
                     await self.enqueue_request(start_request)
+        if not self.running:
+            await self.close_spider()
 
     async def _crawl(self, request):
         # 实现并发
@@ -118,3 +120,6 @@ class Engine:
         if self.scheduler.idle() and self.downloader.idle() and self.task_manager.all_done() and self.processor.idle():
             return True
         return False
+
+    async def close_spider(self):
+        await self.downloader.close()
