@@ -6,6 +6,7 @@ from typing import Final, Set
 from bald_spider import Response
 from aiohttp import ClientSession, TCPConnector, BaseConnector, ClientTimeout, ClientResponse, TraceConfig
 from bald_spider.utils.log import get_logger
+import httpx
 
 
 class ActiveRequestManger:
@@ -32,6 +33,7 @@ class ActiveRequestManger:
 
 
 class Downloader:
+
     def __init__(self, crawler):
         self.crawler = crawler
         self._active = ActiveRequestManger()
@@ -39,7 +41,9 @@ class Downloader:
         self.connector: BaseConnector | None = None
         self._verify_ssl: bool | None = None
         self._timeout: ClientTimeout | None = None
-        self._use_session: bool = True
+        self._use_session: bool | None = None
+        self.tace_config: TraceConfig | None = None
+
         self.logger = get_logger(self.__class__.__name__, crawler.settings.get("LOG_LEVEL"))
         self.request_method = {"get": self._get, "post": self._post}
 
@@ -52,13 +56,15 @@ class Downloader:
         self._timeout = ClientTimeout(total=request_timeout)
         self._verify_ssl = self.crawler.settings.getbool("VERIFY_SSL")
         self._use_session = self.crawler.settings.getbool("USE_SESSION")
+        self.tace_config = TraceConfig()
+        self.tace_config.on_request_start.append(self.request_start)
         if self._use_session:
             self.connector = TCPConnector(verify_ssl=self._verify_ssl)
-            tace_config = TraceConfig()
-            tace_config.on_request_start.append(self.request_start)
-            self.session = ClientSession(connector=self.connector, timeout=self._timeout, trace_configs=[tace_config])
+            self.session = ClientSession(
+                connector=self.connector, timeout=self._timeout, trace_configs=[self.tace_config]
+            )
 
-    async def fetch(self, request) -> Response:
+    async def fetch(self, request) -> Response | None:
         async with self._active(request):
             response = await self.download(request)
             return response
@@ -70,17 +76,15 @@ class Downloader:
                 body = await response.content.read()
             else:
                 connector = TCPConnector(verify_ssl=self._verify_ssl)
-                tace_config = TraceConfig()
-                tace_config.on_request_start.append(self.request_start)
                 async with ClientSession(
-                    connector=connector, timeout=self._timeout, trace_configs=[tace_config]
+                    connector=connector, timeout=self._timeout, trace_configs=[self.tace_config]
                 ) as session:
                     response = await self.send_request(session, request)
                     body = await response.content.read()
 
         except Exception as e:
             self.logger.error(f"Error during request: {e}")
-            return e
+            return None
         return self.structure_response(request, response, body)
 
     @staticmethod
@@ -128,3 +132,62 @@ class Downloader:
             await self.connector.close()
         if self.session:
             await self.session.close()
+
+
+class HTTPXDownloader:
+    def __init__(self, crawler):
+        self.crawler = crawler
+        self._active = ActiveRequestManger()
+        self.logger = get_logger(self.__class__.__name__, crawler.settings.get("LOG_LEVEL"))
+        self._client: httpx.AsyncClient | None = None
+        self._timeout: httpx.Timeout | None = None
+
+    def open(self):
+        self.logger.info(
+            f"{self.crawler.spider} <downloader class: {type(self).__name__}"
+            f"<concurrency: {self.crawler.settings.getint('CONCURRENCY')}"
+        )
+        request_timeout = self.crawler.settings.getint("REQUEST_TIMEOUT")
+        self._timeout = httpx.Timeout(timeout=request_timeout)
+
+    async def fetch(self, request) -> Response | None:
+        async with self._active(request):
+            response = await self.download(request)
+            return response
+
+    async def download(self, request) -> Response | None:
+        try:
+            proxies = request.proxy
+            async with httpx.AsyncClient(timeout=self._timeout, proxy=proxies) as client:
+                self.logger.debug(f"request downloading: {request.url}, method: {request.method}")
+                response = await client.request(
+                    method=request.method,
+                    url=request.url,
+                    headers=request.headers,
+                    cookies=request.cookie,
+                    data=request.body,
+                )
+                body = await response.aread()
+        except Exception as e:
+            self.logger.error(f"Error during request: {e}")
+            return None
+        return self.structure_response(request, response, body)
+
+    @staticmethod
+    def structure_response(request, response, body):
+        return Response(
+            url=request.url,
+            headers=dict(response.headers),
+            body=body,
+            request=request,
+            status_code=response.status_code,
+        )
+
+    def idle(self) -> bool:
+        return len(self) == 0
+
+    def __len__(self):
+        return len(self._active)
+
+    async def close(self):
+        pass

@@ -1,4 +1,4 @@
-from bald_spider.http.request import Request
+from bald_spider import Request
 from bald_spider.spider import Spider
 import asyncio
 from tests.baidu_spider.items import BaiduItem
@@ -33,3 +33,5 @@ class BaiduSpider(Spider):
         item["title"] = "百度首页"
         # item["aaa"] = "百度首页"
         yield item
+
+

@@ -1,4 +1,4 @@
-from bald_spider.core.downloader import Downloader
+from bald_spider.core.downloader import Downloader, HTTPXDownloader
 from bald_spider.core.processor import Processor
 from bald_spider.core.scheduler import Scheduler
 from collections.abc import Generator
@@ -33,7 +33,7 @@ class Engine:
         self.scheduler = Scheduler()
         if hasattr(self.scheduler, "open"):
             self.scheduler.open()
-        self.downloader = Downloader(self.crawler)
+        self.downloader = HTTPXDownloader(self.crawler)
         if hasattr(self.downloader, "open"):
             self.downloader.open()
         self.processor = Processor(self.crawler)
@@ -96,6 +96,8 @@ class Engine:
                     return transform(result)
 
         _response = await self.downloader.fetch(request)
+        if _response is None:
+            return None
         outputs = await _success(_response)
         return outputs
 
