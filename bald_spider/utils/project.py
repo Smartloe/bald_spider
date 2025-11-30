@@ -1,6 +1,8 @@
+from ast import mod
 import sys
 from bald_spider.settings.settins_manager import SettingsManager
 import os
+from importlib import import_module
 
 
 def _get_closest(path="."):
@@ -26,3 +28,18 @@ def merge_settings(spider, settings):
     if hasattr(spider, "custom_settings"):
         custom_settings = getattr(spider, "custom_settings")
         settings.update_values(custom_settings)
+
+
+def load_class(_path):
+    if not isinstance(_path, str):
+        if callable(_path):
+            return _path
+        else:
+            raise TypeError(f"args excepted string or object, got: {type(_path)}")
+    module, name = _path.rsplit(".", 1)
+    mod = import_module(module)
+    try:
+        cls = getattr(mod, name)
+    except AttributeError:
+        raise NameError(f"Module {module!r} doesn't define any object named {name!r}")
+    return cls

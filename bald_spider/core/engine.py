@@ -1,4 +1,4 @@
-from bald_spider.core.downloader import Downloader, HTTPXDownloader
+from bald_spider.core.downloader import DownloaderBase
 from bald_spider.core.processor import Processor
 from bald_spider.core.scheduler import Scheduler
 from collections.abc import Generator
@@ -11,6 +11,7 @@ from inspect import iscoroutine
 from bald_spider.utils.spider import transform
 from bald_spider.task_manager import TaskManager
 from bald_spider.utils.log import get_logger
+from bald_spider.utils.project import load_class
 
 
 class Engine:
@@ -18,13 +19,21 @@ class Engine:
         self.logger = get_logger(self.__class__.__name__)
         self.crawler = crawler
         self.settings = crawler.settings
-        self.downloader: Downloader | None = None
+        self.downloader: DownloaderBase | None = None
         self.start_requests: Generator | None = None
         self.spider: Scheduler | None = None
         self.scheduler: Scheduler | None = None
         self.processor: Processor | None = None
         self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
         self.running = False
+
+    def _get_downloader(self):
+        downloader_cls = load_class(self.settings.get("DOWNLOADER"))
+        if not issubclass(downloader_cls, DownloaderBase):
+            raise TypeError(
+                f"The downloader class ({self.settings.get('DOWNLOADER')}) doesn't fully implemented required interface."
+            )
+        return downloader_cls
 
     async def start_spider(self, spider):
         self.running = True
@@ -33,7 +42,8 @@ class Engine:
         self.scheduler = Scheduler()
         if hasattr(self.scheduler, "open"):
             self.scheduler.open()
-        self.downloader = HTTPXDownloader(self.crawler)
+        downloader_cls = self._get_downloader()
+        self.downloader = downloader_cls.create_instance(self.crawler)
         if hasattr(self.downloader, "open"):
             self.downloader.open()
         self.processor = Processor(self.crawler)

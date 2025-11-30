@@ -2,11 +2,10 @@ import asyncio
 import sys
 import os
 import time
-from bald_spider.core.engine import Engine
 from tests.baidu_spider.spiders.baidu import BaiduSpider
 from bald_spider.utils.project import get_settings
-from bald_spider.settings.settins_manager import SettingsManager
 from tests.baidu_spider.crawler import CrawlerProcess
+from bald_spider.utils import system as _
 
 
 async def run():
