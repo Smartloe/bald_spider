@@ -1,3 +1,4 @@
+import asyncio
 from bald_spider import Request
 from bald_spider.spider import Spider
 from tests.baidu_spider.items import BaiduItem
@@ -14,13 +15,15 @@ class BaiduSpider(Spider):
         return o
 
     async def parse(self, response):
-        for i in range(10):
+        await asyncio.sleep(2)
+        for i in range(2):
             url = "https://www.baidu.com"
             request = Request(url, callback=self.parse_page)
             yield request
 
-    def parse_page(self, response):
-        for i in range(10):
+    async def parse_page(self, response):
+        await asyncio.sleep(2)
+        for i in range(3):
             url = "https://www.baidu.com"
             request = Request(url, callback=self.parse_detail)
             yield request

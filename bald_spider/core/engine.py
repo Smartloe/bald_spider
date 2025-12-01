@@ -26,6 +26,7 @@ class Engine:
         self.processor: Processor | None = None
         self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
         self.running = False
+        self.normal = True
 
     def _get_downloader_cls(self):
         downloader_cls = load_class(self.settings.get("DOWNLOADER"))
@@ -39,7 +40,7 @@ class Engine:
         self.running = True
         self.logger.info(f"info bald_spider started.(project_name:{self.settings.get('PROJECT_NAME')})")
         self.spider = spider
-        self.scheduler = Scheduler()
+        self.scheduler = Scheduler(self.crawler)
         if hasattr(self.scheduler, "open"):
             self.scheduler.open()
         downloader_cls = self._get_downloader_cls()
@@ -53,6 +54,7 @@ class Engine:
     async def _open_spider(self):
         crawling = asyncio.create_task(self.crawl())
         # 这里可以做其他的事情
+        asyncio.create_task(self.scheduler.interval_log(self.settings.getint("INTERVAL")))
         await crawling
 
     async def crawl(self):
@@ -136,3 +138,5 @@ class Engine:
     async def close_spider(self):
         await asyncio.gather(*self.task_manager.current_task)
         await self.downloader.close()
+        if self.normal:
+            await self.crawler.close()

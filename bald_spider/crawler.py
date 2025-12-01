@@ -5,8 +5,10 @@ from bald_spider.spider import Spider
 from typing import Final, Set, Type, Optional
 from bald_spider.settings.settins_manager import SettingsManager
 from bald_spider.exceptions import SpiderTypeError
+from bald_spider.stats_collector import StatsCollector
 from bald_spider.utils.project import merge_settings
 from bald_spider.utils.log import get_logger
+from bald_spider.utils.date import now
 
 logger = get_logger(__name__)
 
@@ -17,15 +19,22 @@ class Crawler:
         self.settings: SettingsManager = settings.copy()
         self.spider: Optional[Spider] = None
         self.engine: Optional[Engine] = None
+        self.stats: StatsCollector | None = None
 
     async def crawl(self):
         self.spider = self._create_spider()
         self.engine = self._create_engine()
+        self.stats = self._create_stats()
         await self.engine.start_spider(self.spider)
 
     def _create_engine(self):
         engine = Engine(self)
         return engine
+
+    def _create_stats(self):
+        stats = StatsCollector(self)
+        stats["start_time"] = now()
+        return stats
 
     def _create_spider(self) -> Spider:
         spider = self.spider_cls.create_instance(self)
@@ -34,6 +43,9 @@ class Crawler:
 
     def _set_spider(self, spider):
         merge_settings(self.spider_cls, self.settings)
+
+    async def close(self, reason="finished"):
+        self.stats.close_spider(self.spider, reason)
 
 
 class CrawlerProcess:
@@ -66,4 +78,6 @@ class CrawlerProcess:
     def _shutdown(self, signum, frame):
         for crawler in self.crawlers:
             crawler.engine.running = False
-        logger.warning(f"sipders received `ctrl+c` signal, closed.")
+            crawler.engine.normal = False
+            crawler.stats.close_spider(crawler.spider, "ctrl + c")
+        logger.warning(f"sipders received `ctrl + c` signal, closed.")
