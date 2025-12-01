@@ -4,7 +4,7 @@ import os
 import time
 from tests.baidu_spider.spiders.baidu import BaiduSpider
 from bald_spider.utils.project import get_settings
-from tests.baidu_spider.crawler import CrawlerProcess
+from bald_spider.crawler import CrawlerProcess
 from bald_spider.utils import system as _
 
 
@@ -17,11 +17,7 @@ async def run():
     settings = get_settings("settings")
     process = CrawlerProcess(settings)
     await process.crawl(BaiduSpider)
-    # await process.crawl(BaiduSpider2)
     await process.start()
-    # baidu_spider = BaiduSpider()
-    # engine = Engine()
-    # await engine.start_spider(baidu_spider)
 
 
 s = time.time()

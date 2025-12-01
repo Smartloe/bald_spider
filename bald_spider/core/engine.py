@@ -134,4 +134,5 @@ class Engine:
         return False
 
     async def close_spider(self):
+        await asyncio.gather(*self.task_manager.current_task)
         await self.downloader.close()
