@@ -1,6 +1,5 @@
 from bald_spider import Request
 from bald_spider.spider import Spider
-import asyncio
 from tests.baidu_spider.items import BaiduItem
 
 
@@ -27,11 +26,7 @@ class BaiduSpider(Spider):
             yield request
 
     def parse_detail(self, response):
-        # print("parse_detail2", response)
         item = BaiduItem()
-        item["url"] = "www.baidu.com"
-        item["title"] = "百度首页"
-        # item["aaa"] = "百度首页"
+        item["url"] = response.url
+        item["title"] = response.xpath("//title/text()").get()
         yield item
-
-

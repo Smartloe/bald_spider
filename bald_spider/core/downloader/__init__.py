@@ -1,12 +1,11 @@
-from re import A
+from tkinter import SE
 from typing import Final, Set
 from contextlib import asynccontextmanager
-
-from attr import has
 from bald_spider import Request
 from bald_spider.http.response import Response
 from bald_spider.utils.log import get_logger
 from abc import ABC, abstractmethod, ABCMeta
+from typing_extensions import Self
 
 
 class DwonloaderMeta(ABCMeta):
@@ -26,10 +25,10 @@ class DownloaderBase(ABC, metaclass=DwonloaderMeta):
         self.logger = get_logger(self.__class__.__name__, crawler.settings.get("LOG_LEVEL"))
 
     @classmethod
-    def create_instance(cls, *args, **kwargs):
+    def create_instance(cls, *args, **kwargs) -> Self:
         return cls(*args, **kwargs)
 
-    def open(self):
+    def open(self) -> None:
         self.logger.info(
             f"{self.crawler.spider} <downloader class: {type(self).__name__}"
             f"<concurrency: {self.crawler.settings.getint('CONCURRENCY')}"
@@ -47,10 +46,10 @@ class DownloaderBase(ABC, metaclass=DwonloaderMeta):
     def idle(self) -> bool:
         return len(self) == 0
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._active)
 
-    async def close(self):
+    async def close(self) -> None:
         pass
 
 
@@ -59,11 +58,11 @@ class ActiveRequestManger:
         self._active: Final[Set] = set()
 
     def add(self, request):
-        print("add request", request)
+        # print("add request", request)
         self._active.add(request)
 
     def remove(self, request):
-        print("remove request", request)
+        # print("remove request", request)
         self._active.remove(request)
 
     @asynccontextmanager

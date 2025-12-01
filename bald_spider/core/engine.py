@@ -27,7 +27,7 @@ class Engine:
         self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
         self.running = False
 
-    def _get_downloader(self):
+    def _get_downloader_cls(self):
         downloader_cls = load_class(self.settings.get("DOWNLOADER"))
         if not issubclass(downloader_cls, DownloaderBase):
             raise TypeError(
@@ -42,7 +42,7 @@ class Engine:
         self.scheduler = Scheduler()
         if hasattr(self.scheduler, "open"):
             self.scheduler.open()
-        downloader_cls = self._get_downloader()
+        downloader_cls = self._get_downloader_cls()
         self.downloader = downloader_cls.create_instance(self.crawler)
         if hasattr(self.downloader, "open"):
             self.downloader.open()
