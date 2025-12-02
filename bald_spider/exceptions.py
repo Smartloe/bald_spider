@@ -20,3 +20,7 @@ class ItemAttribuError(Exception):
 
 class DecodeError(Exception):
     pass
+
+
+class MiddlewareInitError(Exception):
+    pass

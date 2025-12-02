@@ -3,6 +3,7 @@ from typing import Final, Set
 from contextlib import asynccontextmanager
 from bald_spider import Request
 from bald_spider.http.response import Response
+from bald_spider.middleware.middleware_manager import MiddlewareManager
 from bald_spider.utils.log import get_logger
 from abc import ABC, abstractmethod, ABCMeta
 from typing_extensions import Self
@@ -22,6 +23,7 @@ class DownloaderBase(ABC, metaclass=DwonloaderMeta):
     def __init__(self, crawler) -> None:
         self.crawler = crawler
         self._active = ActiveRequestManger()
+        self.middleware: MiddlewareManager | None = None
         self.logger = get_logger(self.__class__.__name__, crawler.settings.get("LOG_LEVEL"))
 
     @classmethod
@@ -33,6 +35,7 @@ class DownloaderBase(ABC, metaclass=DwonloaderMeta):
             f"{self.crawler.spider} <downloader class: {type(self).__name__}"
             f"<concurrency: {self.crawler.settings.getint('CONCURRENCY')}"
         )
+        self.middleware = MiddlewareManager.create_instance(self.crawler)
 
     async def fetch(self, request) -> Response | None:
         async with self._active(request):
