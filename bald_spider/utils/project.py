@@ -1,8 +1,16 @@
-from ast import mod
+from inspect import iscoroutinefunction
 import sys
+from typing import Callable
 from bald_spider.settings.settins_manager import SettingsManager
 import os
 from importlib import import_module
+
+
+async def common_call(func: Callable, *args, **kwargs):
+    if iscoroutinefunction(func):
+        return await func(*args, **kwargs)
+    else:
+        return func(*args, **kwargs)
 
 
 def _get_closest(path="."):

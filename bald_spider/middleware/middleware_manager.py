@@ -1,10 +1,14 @@
 from types import MethodType
-from bald_spider.exceptions import MiddlewareInitError
+from typing import Callable
+from bald_spider.exceptions import InvalidOutputError, MiddlewareInitError, RequestMethodError
+from bald_spider.http.response import Response
+from bald_spider.http.request import Request
 from bald_spider.middleware import BaseMiddleware
 from bald_spider.utils.log import get_logger
 from bald_spider.utils.project import load_class
 from pprint import pformat
 from collections import defaultdict
+from bald_spider.utils.project import common_call
 
 
 class MiddlewareManager:
@@ -16,6 +20,65 @@ class MiddlewareManager:
         middlewares = self.crawler.settings.getlist("MIDDLEWARES")
         self._add_middlewares(middlewares)
         self._add_methods()
+        self.download_method: Callable = crawler.engine.downloader.download
+        self._stats = crawler.stats
+
+    async def _process_request(self, request: Request):
+        for method in self.methods["process_request"]:
+            # result = method(request, self.crawler.spider)
+            result = await common_call(method, request, self.crawler.spider)
+            if result == None:
+                continue
+            if isinstance(result, (Request, Response)):
+                return result
+            raise InvalidOutputError(
+                f"middleware {method.__qualname__} must return Request, Response or None,got {type(result).__name__}"
+            )
+        return await self.download_method(request)
+
+    async def _process_response(self, request: Request, response: Response):
+        for method in reversed(self.methods["process_response"]):
+            response = await common_call(method, request, response, self.crawler.spider)
+            if isinstance(response, Request):
+                return response
+            if isinstance(response, Response):
+                continue
+            raise InvalidOutputError(
+                f"middleware {method.__qualname__} must return Request or Response,got {type(response).__name__}"
+            )
+        return response
+
+    async def _process_exception(self, request: Request, exception: Exception):
+        for method in reversed(self.methods["process_exception"]):
+            response = await common_call(method, request, exception, self.crawler.spider)
+            if response is None:
+                continue
+            if isinstance(response, (Request, Response)):
+                return response
+            if response:
+                break
+            raise InvalidOutputError(
+                f"middleware {method.__qualname__} must return Request, Response or None,got {type(response).__name__}"
+            )
+        else:
+            raise exception
+
+    async def download(self, request: Request) -> Response | None:
+        try:
+            response = await self._process_request(request)
+        except KeyError:
+            raise RequestMethodError(f"{request.method.lower()} is not supported.")
+        except Exception as exc:
+            self._stats.inc_value(f"download_error/{exc.__class__.__name__}")
+            response = await self._process_exception(request, exc)
+        else:
+            self.crawler.stats.inc_value("response_received_count")
+        if isinstance(response, Response):
+            response = await self._process_response(request, response)
+        if isinstance(response, Request):
+            await self.crawler.engine.enqueue_request(request)
+            return None
+        return response
 
     def _add_methods(self):
         for middleware in self.middlewares:
@@ -49,11 +112,9 @@ class MiddlewareManager:
         return cls(*args, **kwargs)
 
     @staticmethod
-    def _validate_method(method_name, middleware):
+    def _validate_method(method_name, middleware) -> bool:
         method = getattr(type(middleware), method_name)
 
         base_method = getattr(BaseMiddleware, method_name)
-        if method == base_method:
-            return False
-        else:
-            return True
+
+        return False if method == base_method else True

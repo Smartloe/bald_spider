@@ -39,7 +39,7 @@ class DownloaderBase(ABC, metaclass=DwonloaderMeta):
 
     async def fetch(self, request) -> Response | None:
         async with self._active(request):
-            response = await self.download(request)
+            response = await self.middleware.download(request)
             return response
 
     @abstractmethod
