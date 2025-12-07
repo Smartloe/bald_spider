@@ -7,6 +7,6 @@ DOWNLOADER = "bald_spider.core.downloader.httpx_downloader.HTTPXDownloader"
 STATS_DUMP = True
 MIDDLEWARES = [
     "middleware.TestMiddlware",
-    "middleware.TestMiddlware2",
-    "middleware.TestMiddlware3",
+    #     "middleware.TestMiddlware2",
+    #     "middleware.TestMiddlware3",
 ]

@@ -1,6 +1,6 @@
 from types import MethodType
 from typing import Callable
-from bald_spider.exceptions import InvalidOutputError, MiddlewareInitError, RequestMethodError
+from bald_spider.exceptions import IgnoreRequest, InvalidOutputError, MiddlewareInitError, RequestMethodError
 from bald_spider.http.response import Response
 from bald_spider.http.request import Request
 from bald_spider.middleware import BaseMiddleware
@@ -68,6 +68,13 @@ class MiddlewareManager:
             response = await self._process_request(request)
         except KeyError:
             raise RequestMethodError(f"{request.method.lower()} is not supported.")
+        except IgnoreRequest as exc:
+            self.logger.info(f"{request} ignored.")
+            self._stats.inc_value(f"request_ignore_count")
+            reason = exc.msg
+            if reason:
+                self._stats.inc_value(f"request_ignore_count/{reason}")
+            response = await self._process_exception(request, exc)
         except Exception as exc:
             self._stats.inc_value(f"download_error/{exc.__class__.__name__}")
             response = await self._process_exception(request, exc)
