@@ -124,4 +124,4 @@ class MiddlewareManager:
 
         base_method = getattr(BaseMiddleware, method_name)
 
-        return False if method == base_method else True
+        return method != base_method
