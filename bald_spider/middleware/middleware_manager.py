@@ -1,3 +1,5 @@
+from asyncio import create_task
+from tkinter import N, NO
 from types import MethodType
 from typing import Callable
 from bald_spider.exceptions import IgnoreRequest, InvalidOutputError, MiddlewareInitError, RequestMethodError
@@ -9,6 +11,7 @@ from bald_spider.utils.project import load_class
 from pprint import pformat
 from collections import defaultdict
 from bald_spider.utils.project import common_call
+from bald_spider.event import ignore_request, response_received
 
 
 class MiddlewareManager:
@@ -38,14 +41,24 @@ class MiddlewareManager:
 
     async def _process_response(self, request: Request, response: Response):
         for method in reversed(self.methods["process_response"]):
-            response = await common_call(method, request, response, self.crawler.spider)
-            if isinstance(response, Request):
-                return response
-            if isinstance(response, Response):
-                continue
-            raise InvalidOutputError(
-                f"middleware {method.__qualname__} must return Request or Response,got {type(response).__name__}"
-            )
+            try:
+                response = await common_call(method, request, response, self.crawler.spider)
+            except IgnoreRequest as exc:
+                create_task(self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider))
+                self.logger.info(f"{request} ignored.")
+                self._stats.inc_value(f"request_ignored_count")
+                reason = exc.msg
+                if reason:
+                    self._stats.inc_value(f"request_ignored_count/{reason}")
+                return None
+            else:
+                if isinstance(response, Request):
+                    return response
+                if isinstance(response, Response):
+                    continue
+                raise InvalidOutputError(
+                    f"middleware {method.__qualname__} must return Request or Response,got {type(response).__name__}"
+                )
         return response
 
     async def _process_exception(self, request: Request, exception: Exception):
@@ -69,6 +82,7 @@ class MiddlewareManager:
         except KeyError:
             raise RequestMethodError(f"{request.method.lower()} is not supported.")
         except IgnoreRequest as exc:
+            create_task(self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider))
             self.logger.info(f"{request} ignored.")
             self._stats.inc_value(f"request_ignore_count")
             reason = exc.msg
@@ -79,6 +93,7 @@ class MiddlewareManager:
             self._stats.inc_value(f"download_error/{exc.__class__.__name__}")
             response = await self._process_exception(request, exc)
         else:
+            create_task(self.crawler.subscriber.notify(response_received, response, self.crawler.spider))
             self.crawler.stats.inc_value("response_received_count")
         if isinstance(response, Response):
             response = await self._process_response(request, response)

@@ -1,11 +1,13 @@
 import asyncio
 import signal
 from bald_spider.core.engine import Engine
+from bald_spider.event import spider_closed, spider_opened
 from bald_spider.spider import Spider
-from typing import Final, Set, Type, Optional
+from typing import Final, Set, Type
 from bald_spider.settings.settins_manager import SettingsManager
 from bald_spider.exceptions import SpiderTypeError
 from bald_spider.stats_collector import StatsCollector
+from bald_spider.subscriber import Subscriber
 from bald_spider.utils.project import merge_settings
 from bald_spider.utils.log import get_logger
 from bald_spider.utils.date import now
@@ -17,15 +19,20 @@ class Crawler:
     def __init__(self, spider_cls, settings):
         self.spider_cls = spider_cls
         self.settings: SettingsManager = settings.copy()
-        self.spider: Optional[Spider] = None
-        self.engine: Optional[Engine] = None
+        self.spider: Spider | None = None
+        self.engine: Engine | None = None
         self.stats: StatsCollector | None = None
+        self.subscriber: Subscriber | None = None
 
     async def crawl(self):
+        self.subscriber = self._create_subscriber()
         self.spider = self._create_spider()
         self.engine = self._create_engine()
         self.stats = self._create_stats()
         await self.engine.start_spider(self.spider)
+
+    def _create_subscriber(self):
+        return Subscriber()
 
     def _create_engine(self):
         engine = Engine(self)
@@ -42,9 +49,12 @@ class Crawler:
         return spider
 
     def _set_spider(self, spider):
+        self.subscriber.subscriber(spider.spider_opened, event=spider_opened)
+        self.subscriber.subscriber(spider.spider_closed, event=spider_closed)
         merge_settings(self.spider_cls, self.settings)
 
     async def close(self, reason="finished"):
+        asyncio.create_task(self.subscriber.notify(spider_closed))
         self.stats.close_spider(self.spider, reason)
 
 

@@ -1,6 +1,7 @@
 import asyncio
 
 from httpx._transports import default
+from bald_spider.event import request_scheduled
 from bald_spider.utils.pqueue import SpoderPriorityQueue
 from bald_spider.utils.log import get_logger
 
@@ -22,6 +23,7 @@ class Scheduler:
 
     async def enqueue_request(self, request):
         await self.request_queue.put(request)
+        asyncio.create_task(self.crawler.subscriber.notify(request_scheduled, request, self.crawler.spider))
         self.crawler.stats.inc_value("request_scheduler_count")
 
     def idle(self) -> bool:
