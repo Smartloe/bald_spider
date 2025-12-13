@@ -4,7 +4,7 @@ from bald_spider.core.engine import Engine
 from bald_spider.event import spider_closed, spider_opened
 from bald_spider.spider import Spider
 from typing import Final, Set, Type
-from bald_spider.settings.settins_manager import SettingsManager
+from bald_spider.settings.settings_manager import SettingsManager
 from bald_spider.exceptions import SpiderTypeError
 from bald_spider.stats_collector import StatsCollector
 from bald_spider.subscriber import Subscriber

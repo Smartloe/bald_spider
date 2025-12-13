@@ -38,3 +38,7 @@ class IgnoreRequest(Exception):
     def __init__(self, msg) -> None:
         self.msg = msg
         super(IgnoreRequest, self).__init__(msg)
+
+
+class NotConfigured(Exception):
+    pass

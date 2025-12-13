@@ -8,14 +8,9 @@ from bald_spider.event import spider_error
 
 class BaiduSpider(Spider):
     start_urls = ["https://www.baidu.com", "https://www.baidu.com"]
-
-    @classmethod
-    def create_instance(cls, crawler):
-        # 实例化的逻辑
-        o = cls()
-        o.crawler = crawler
-        crawler.subscriber.subscriber(o.spider_error, event=spider_error)
-        return o
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+    }
 
     async def parse(self, response):
         for i in range(2):
@@ -24,7 +19,6 @@ class BaiduSpider(Spider):
             yield request
 
     async def parse_page(self, response):
-        1 / 0
         for i in range(5):
             url = "https://www.baidu.com"
             request = Request(url, callback=self.parse_detail)
@@ -36,11 +30,11 @@ class BaiduSpider(Spider):
         item["title"] = response.xpath("//title/text()").get()
         yield item
 
-    async def spider_opened(self):
-        print("爬虫开始了")
+    # async def spider_opened(self):
+    #     print("爬虫开始了")
 
-    async def spider_closed(self):
-        print("爬虫结束了")
+    # async def spider_closed(self):
+    #     print("爬虫结束了")
 
-    async def spider_error(self, exc, spider):
-        print(f"爬虫出错了{exc},请紧急处理一下!")
+    # async def spider_error(self, exc, spider):
+    #     print(f"爬虫出错了{exc},请紧急处理一下!")

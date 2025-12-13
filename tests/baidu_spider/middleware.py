@@ -9,7 +9,6 @@ class TestMiddlware(BaseMiddleware):
         print("test middleware", request, spider)
         # if random.randint(1, 5) == 1:
         #     raise IgnoreRequest("重复请求")
-
         # if "111" in request.url:
         #     raise IgnoreRequest("URL不规则")
 

@@ -1,8 +1,13 @@
 from asyncio import create_task
-from tkinter import N, NO
 from types import MethodType
 from typing import Callable
-from bald_spider.exceptions import IgnoreRequest, InvalidOutputError, MiddlewareInitError, RequestMethodError
+from bald_spider.exceptions import (
+    IgnoreRequest,
+    InvalidOutputError,
+    MiddlewareInitError,
+    NotConfigured,
+    RequestMethodError,
+)
 from bald_spider.http.response import Response
 from bald_spider.http.request import Request
 from bald_spider.middleware import BaseMiddleware
@@ -45,11 +50,6 @@ class MiddlewareManager:
                 response = await common_call(method, request, response, self.crawler.spider)
             except IgnoreRequest as exc:
                 create_task(self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider))
-                self.logger.info(f"{request} ignored.")
-                self._stats.inc_value(f"request_ignored_count")
-                reason = exc.msg
-                if reason:
-                    self._stats.inc_value(f"request_ignored_count/{reason}")
                 return None
             else:
                 if isinstance(response, Request):
@@ -83,11 +83,6 @@ class MiddlewareManager:
             raise RequestMethodError(f"{request.method.lower()} is not supported.")
         except IgnoreRequest as exc:
             create_task(self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider))
-            self.logger.info(f"{request} ignored.")
-            self._stats.inc_value(f"request_ignore_count")
-            reason = exc.msg
-            if reason:
-                self._stats.inc_value(f"request_ignore_count/{reason}")
             response = await self._process_exception(request, exc)
         except Exception as exc:
             self._stats.inc_value(f"download_error/{exc.__class__.__name__}")
@@ -125,9 +120,12 @@ class MiddlewareManager:
             raise MiddlewareInitError(
                 f"Middleware init failed, must inherit from `BaseMiddleware` or `create_instance` method."
             )
-        instance = middleware_cls.create_instance(self.crawler)
-        self.middlewares.append(instance)
-        return True
+        try:
+            instance = middleware_cls.create_instance(self.crawler)
+            self.middlewares.append(instance)
+            return True
+        except NotConfigured:
+            return False
 
     @classmethod
     def create_instance(cls, *args, **kwargs):

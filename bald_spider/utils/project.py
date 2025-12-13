@@ -1,7 +1,7 @@
 from inspect import iscoroutinefunction
 import sys
 from typing import Callable
-from bald_spider.settings.settins_manager import SettingsManager
+from bald_spider.settings.settings_manager import SettingsManager
 import os
 from importlib import import_module
 

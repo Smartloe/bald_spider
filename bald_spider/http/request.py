@@ -1,5 +1,3 @@
-from tkinter import N
-from token import OP
 from typing import Dict, Callable
 
 
@@ -19,7 +17,7 @@ class Request:
         meta: Dict | None = None,
     ):
         self.url = url
-        self.headers = headers
+        self.headers = headers if headers else {}
         self.callback = callback
         self.priority = priority
         self.method = method
