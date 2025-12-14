@@ -7,13 +7,14 @@ DOWNLOADER = "bald_spider.core.downloader.httpx_downloader.HTTPXDownloader"
 STATS_DUMP = True
 MIDDLEWARES = [
     # engine side
+    "middleware.TestMiddlware",
     "bald_spider.middleware.download_delay.DownloadDelay",
     "bald_spider.middleware.default_header.DefaultHeader",
+    "bald_spider.middleware.response_filter.ResponseFilter",
     "bald_spider.middleware.retry.Retry",
     "bald_spider.middleware.response_code.ResponseCodeStats",
     "bald_spider.middleware.request_ignore.RequestIngore",
-    "middleware.TestMiddlware",
-    "middleware.TestMiddlware2",
+    # "middleware.TestMiddlware2",
     #     "middleware.TestMiddlware3",
     # downloader side
 ]
@@ -30,3 +31,4 @@ DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Connection": "keep-alive",
 }
+ALLOWED_CODES = []
