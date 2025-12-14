@@ -1,6 +1,6 @@
 PROJECT_NAME = "baidu_spider"
 TEST = 331
-CONCURRENCY = 1
+CONCURRENCY = 5
 LOG_LEVEL = "DEBUG"
 USE_SESSION = True
 DOWNLOADER = "bald_spider.core.downloader.httpx_downloader.HTTPXDownloader"
@@ -17,9 +17,14 @@ MIDDLEWARES = [
     #     "middleware.TestMiddlware3",
     # downloader side
 ]
-DOWNLOAD_DELAY = 2
-RANDOMNESS = True
+DOWNLOAD_DELAY = 0
+RANDOMNESS = False
 RANDEOM_RANGE = (0.75, 1.25)
+# retry settings
+RETRY_HTTP_CODES = [408, 429, 500, 503, 504, 522, 524]
+IGNORE_HTTP_CODES = [403, 404]
+MAX_RETRY_TIMES = 2
+RETRY_EXCEPTIONS = []
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

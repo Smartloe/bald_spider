@@ -54,6 +54,8 @@ class Engine:
 
     async def _open_spider(self):
         asyncio.create_task(self.crawler.subscriber.notify(spider_opened))
+        # 启动处理器的后台处理任务
+        asyncio.create_task(self.processor.process())
         crawling = asyncio.create_task(self.crawl())
         # 这里可以做其他的事情
         asyncio.create_task(self.scheduler.interval_log(self.settings.getint("INTERVAL")))

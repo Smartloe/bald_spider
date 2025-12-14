@@ -38,10 +38,10 @@ class Scheduler:
             last_response_count = self.crawler.stats.get_value("response_received_count", default=0)
             item_rate = last_item_count - self.item_count
             response_rate = last_response_count - self.response_count
-            self.item_count, self.response_count = item_rate, response_rate
+            self.item_count, self.response_count = last_item_count, last_response_count
             self.logger.info(
-                f"Crawled {last_response_count} pages (at {response_rate} pages/{interval}s),"
-                f"Got {last_item_count} pages (at {item_rate} pages/{interval}s),"
+                f"Crawled {last_response_count} pages (at {response_rate} pages/{interval}s), "
+                f"Got {last_item_count} items (at {item_rate} items/{interval}s)"
             )
             await asyncio.sleep(interval)
 

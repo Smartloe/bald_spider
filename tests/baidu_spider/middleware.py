@@ -1,16 +1,14 @@
 from bald_spider.exceptions import IgnoreRequest
-from bald_spider.middleware import BaseMiddleware
+from bald_spider.middleware import BaseMiddleware, retry
 import random
 from asyncio import sleep
 
 
 class TestMiddlware(BaseMiddleware):
     async def process_request(self, request, spider):
-        print("test middleware", request, spider)
-        # if random.randint(1, 5) == 1:
-        #     raise IgnoreRequest("重复请求")
-        # if "111" in request.url:
-        #     raise IgnoreRequest("URL不规则")
+        retry_times = request.meta.get("retry_times") or 0
+        if retry_times > 3 and request.url == "https://www.baidu.com111":
+            request.url = "https://www.baidu.com"
 
     def process_response(self, request, response, spider):
         print("test middleware response", request, response, spider)

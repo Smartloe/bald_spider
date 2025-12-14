@@ -74,6 +74,8 @@ class Retry:
             return self._retry(request, type(exception).__name__, spider)
 
     def _retry(self, request, reason, spider):
+        # TODO 去重的逻辑还没写,要保证重试的请求不要被请求过滤器给过滤掉
+        # 重新发起请求的优先级该怎么定
         retry_times = request.meta.get("retry_times", 0)
         if retry_times < self.max_retry_times:
             retry_times += 1
