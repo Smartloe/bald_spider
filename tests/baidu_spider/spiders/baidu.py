@@ -20,6 +20,7 @@ class BaiduSpider(Spider):
 
     async def parse_page(self, response):
         for i in range(5):
+            meta = {"dont_retry": True}
             url = "https://www.baidu.com"
             request = Request(url, callback=self.parse_detail)
             yield request

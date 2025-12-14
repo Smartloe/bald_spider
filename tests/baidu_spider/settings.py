@@ -7,10 +7,11 @@ DOWNLOADER = "bald_spider.core.downloader.httpx_downloader.HTTPXDownloader"
 STATS_DUMP = True
 MIDDLEWARES = [
     # engine side
-    "bald_spider.middleware.request_ignore.RequestIngore",
-    "bald_spider.middleware.response_code.ResponseCodeStats",
     "bald_spider.middleware.download_delay.DownloadDelay",
     "bald_spider.middleware.default_header.DefaultHeader",
+    "bald_spider.middleware.retry.Retry",
+    "bald_spider.middleware.response_code.ResponseCodeStats",
+    "bald_spider.middleware.request_ignore.RequestIngore",
     "middleware.TestMiddlware",
     "middleware.TestMiddlware2",
     #     "middleware.TestMiddlware3",
