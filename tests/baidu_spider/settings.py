@@ -18,7 +18,7 @@ MIDDLEWARES = [
     #     "middleware.TestMiddlware3",
     # downloader side
 ]
-DOWNLOAD_DELAY = 0
+DOWNLOAD_DELAY = 1
 RANDOMNESS = False
 RANDEOM_RANGE = (0.75, 1.25)
 # retry settings
