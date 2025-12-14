@@ -79,10 +79,10 @@ class Retry:
         retry_times = request.meta.get("retry_times", 0)
         if retry_times < self.max_retry_times:
             retry_times += 1
-            self.logger.info(f"{request} {reason} retry {retry_times} time ...")
+            self.logger.info(f"{spider} {request} {reason} retry {retry_times} time ...")
             request.meta["retry_times"] = retry_times
             self.stats.inc_value(f"retry_count")
             return request
         else:
-            self.logger.warning(f"{request} {reason} retry max {self.max_retry_times} times, give up.")
+            self.logger.warning(f"{spider} {request} {reason} retry max {self.max_retry_times} times, give up.")
             return None
