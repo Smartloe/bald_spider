@@ -20,40 +20,51 @@ pip install -e .
 
 ### 5分钟上手
 
-创建你的第一个爬虫：
+创建你的第一个爬虫（以下三个文件放在同一目录）：
+
+```python
+# settings.py
+PROJECT_NAME = "my_project"
+CONCURRENCY = 8
+```
 
 ```python
 # my_spider.py
 from bald_spider.spider import Spider
 from bald_spider.http.request import Request
 
+
 class MySpider(Spider):
     start_urls = ["https://httpbin.org"]
-    
+
     async def parse(self, response):
         print(f"抓取完成: {response}")
-        
+
         # 生成新的请求
         for i in range(5):
             yield Request(
                 url=f"https://httpbin.org/delay/{i}",
                 callback=self.parse_detail
             )
-    
+
     def parse_detail(self, response):
         print(f"详情页面: {response}")
+```
 
+```python
 # run.py
 import asyncio
 from bald_spider.crawler import CrawlerProcess
 from bald_spider.utils.project import get_settings
 from my_spider import MySpider
 
+
 async def main():
     settings = get_settings()
     process = CrawlerProcess(settings)
     await process.crawl(MySpider)
     await process.start()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -73,8 +84,8 @@ python run.py
 - 内存友好的生成器模式，避免大量数据加载
 
 ### 🎯 智能调度
-- 优先级队列支持，重要请求优先处理
-- 自动请求去重和调度优化
+- 优先级队列支持，priority 数值越大越先处理
+- 基于优先级的请求调度
 - 非阻塞的请求队列管理
 
 ### 🔧 灵活配置
@@ -154,14 +165,21 @@ bald_spider/
 ### 自定义数据项
 
 ```python
+from bald_spider.items import Field
 from bald_spider.items.items import Item
 
+
 class ProductItem(Item):
-    def __init__(self, name=None, price=None, description=None):
-        self.name = name
-        self.price = price
-        self.description = description
+    name = Field()
+    price = Field()
+    description = Field()
+
+
+item = ProductItem()
+item["name"] = "示例商品"
 ```
+
+注意：`Item` 的字段必须通过 `item["field"] = value` 赋值，不能使用 `item.field = value`。
 
 ### 高级请求配置
 
@@ -267,7 +285,7 @@ python run.py
 ```python
 # bald_spider/settings/default_settings.py
 CONCURRENCY = 16              # 最大并发请求数
-TEST = 333                    # 示例配置值
+REQUEST_TIMEOUT = 60          # 请求超时时间（秒）
 ```
 
 ### 项目配置
@@ -277,7 +295,7 @@ TEST = 333                    # 示例配置值
 PROJECT_NAME = "my_project"
 CONCURRENCY = 8               # 降低并发数
 REQUEST_TIMEOUT = 30          # 请求超时时间（秒）
-RETRY_TIMES = 3               # 重试次数
+MAX_RETRY_TIMES = 3           # 最大重试次数
 DOWNLOAD_DELAY = 1.0          # 下载延迟（秒）
 ```
 

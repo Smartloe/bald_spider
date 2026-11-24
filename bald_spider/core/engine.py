@@ -4,7 +4,7 @@ from bald_spider.core.scheduler import Scheduler
 from collections.abc import Generator
 from typing import Callable
 import asyncio
-from bald_spider.event import spider_error, spider_opened
+from bald_spider.event import spider_closed, spider_error, spider_opened
 from bald_spider.exceptions import OutputError
 from bald_spider.http.request import Request
 from bald_spider.items.items import Item
@@ -26,6 +26,7 @@ class Engine:
         self.scheduler: Scheduler | None = None
         self.processor: Processor | None = None
         self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
+        self.interval_log_task: asyncio.Task | None = None
         self.running = False
         self.normal = True
 
@@ -58,7 +59,9 @@ class Engine:
         asyncio.create_task(self.processor.process())
         crawling = asyncio.create_task(self.crawl())
         # 这里可以做其他的事情
-        asyncio.create_task(self.scheduler.interval_log(self.settings.getint("INTERVAL")))
+        self.interval_log_task = asyncio.create_task(
+            self.scheduler.interval_log(self.settings.getint("INTERVAL"))
+        )
         await crawling
 
     async def crawl(self):
@@ -67,25 +70,28 @@ class Engine:
             request = await self._get_next_request()
             if request is not None:
                 await self._crawl(request)
-            else:
+                continue
+            if self.start_requests is not None:
                 try:
                     start_request = next(self.start_requests)
                 except StopIteration:
-                    self.start_requests = None
-
-                except Exception as e:
                     # 1.发起请求的task运行完毕
-                    # 2.调度器是否空闲
-                    # 3.下载器是否空闲
-                    if not await self._exit():
-                        continue
-
-                    self.running = False
-                    if self.start_requests is not None:
-                        self.logger.error(f"Error during start_requests: {e}")
+                    self.start_requests = None
+                except Exception as e:
+                    # 2.start_requests 抛异常：记录并通知，避免静默吞掉后死循环
+                    self.start_requests = None
+                    self.logger.error(f"Error during start_requests: {e}", exc_info=True)
+                    asyncio.create_task(
+                        self.crawler.subscriber.notify(spider_error, e, self.spider)
+                    )
                 else:
                     # 入队
                     await self.enqueue_request(start_request)
+                    continue
+            # 3.调度器、下载器、任务、处理器是否都空闲
+            if not await self._exit():
+                continue
+            self.running = False
         if not self.running:
             await self.close_spider()
 
@@ -112,11 +118,11 @@ class Engine:
         async def _success(_response):
             callback: Callable = request.callback or self.spider.parse
             result = callback(_response)
+            if iscoroutine(result):
+                result = await result
             if result:
-                if iscoroutine(result):
-                    await result
-                else:
-                    return transform(result)
+                # 同步/异步回调统一走 transform，避免协程返回值被静默丢弃。
+                return transform(result)
 
         _response = await self.downloader.fetch(request)
         if _response is None:
@@ -150,6 +156,12 @@ class Engine:
         return False
 
     async def close_spider(self):
+        if self.interval_log_task is not None and not self.interval_log_task.done():
+            self.interval_log_task.cancel()
+            try:
+                await self.interval_log_task
+            except asyncio.CancelledError:
+                pass
         results = await asyncio.gather(*self.task_manager.current_task, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
@@ -160,3 +172,6 @@ class Engine:
         await self.downloader.close()
         if self.normal:
             await self.crawler.close()
+        else:
+            # ctrl+c 等非正常关闭：统计已由信号处理器记录，这里补发关闭事件。
+            await self.crawler.subscriber.notify(spider_closed)

@@ -64,7 +64,11 @@ class CrawlerProcess:
         self.crawlers: Final[Set] = set()
         self._active: Final[Set] = set()
         self.settings = settings
-        signal.signal(signal.SIGINT, self._shutdown)
+        try:
+            signal.signal(signal.SIGINT, self._shutdown)
+        except ValueError:
+            # 非主线程无法注册信号处理器，退化为默认行为。
+            logger.warning("SIGINT handler not installed (not running in main thread).")
 
     async def crawl(self, spider: Type[Spider]):
         crawler: Crawler = self._create_crawler(spider)
@@ -87,7 +91,9 @@ class CrawlerProcess:
 
     def _shutdown(self, signum, frame):
         for crawler in self.crawlers:
-            crawler.engine.running = False
-            crawler.engine.normal = False
-            crawler.stats.close_spider(crawler.spider, "ctrl + c")
-        logger.warning(f"sipders received `ctrl + c` signal, closed.")
+            if crawler.engine is not None:
+                crawler.engine.running = False
+                crawler.engine.normal = False
+            if crawler.stats is not None and crawler.spider is not None:
+                crawler.stats.close_spider(crawler.spider, "ctrl + c")
+        logger.warning(f"spiders received `ctrl + c` signal, closed.")

@@ -11,7 +11,7 @@ class Request:
         priority: int = 0,
         method: str = "GET",
         cookie: Dict | None = None,
-        proxy: Dict | None = None,
+        proxy: str | None = None,
         body="",
         encoding="utf-8",
         meta: Dict | None = None,
@@ -30,8 +30,9 @@ class Request:
     def __str__(self):
         return f" {self.url} {self.method}"
 
-    def __lt__(slef, other):
-        return slef.priority < other.priority
+    def __lt__(self, other):
+        # PriorityQueue 是最小堆，取反后 priority 数值越大越先出队（与文档“高优先级”一致）。
+        return self.priority > other.priority
 
     @property
     def meta(self):

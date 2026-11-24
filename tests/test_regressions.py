@@ -10,7 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from bald_spider import Request, Response
+from bald_spider.core.downloader import ActiveRequestManger, DownloaderBase
+from bald_spider.crawler import Crawler
 from bald_spider.exceptions import IgnoreRequest
+from bald_spider.items import Field
+from bald_spider.items.items import Item
 from bald_spider.middleware.default_header import DefaultHeader
 from bald_spider.middleware.middleware_manager import MiddlewareManager
 from bald_spider.middleware.response_filter import ResponseFilter
@@ -19,6 +23,7 @@ from bald_spider.settings.settings_manager import SettingsManager
 from bald_spider.spider import Spider
 from bald_spider.subscriber import Subscriber
 from bald_spider.task_manager import TaskManager
+from bald_spider.utils.pqueue import SpoderPriorityQueue
 
 
 def _response(request, status_code=200, headers=None, body=b""):
@@ -176,3 +181,79 @@ def test_task_manager_logs_unhandled_task_exception(caplog):
 def test_spider_parse_raises_not_implemented_error():
     with pytest.raises(NotImplementedError):
         Spider().parse(None)
+
+
+def test_request_priority_orders_higher_priority_first():
+    async def scenario():
+        queue = SpoderPriorityQueue()
+        for priority in (0, 10, 5, 1):
+            await queue.put(Request(f"http://example.com/{priority}", priority=priority))
+        return [(await queue.get()).priority for _ in range(4)]
+
+    assert asyncio.run(scenario()) == [10, 5, 1, 0]
+
+
+class _BaseItem(Item):
+    url = Field()
+
+
+class _ChildItem(_BaseItem):
+    title = Field()
+
+
+def test_item_meta_inherits_parent_fields():
+    item = _ChildItem()
+    item["url"] = "http://example.com"
+    item["title"] = "title"
+
+    assert item.to_dict() == {"url": "http://example.com", "title": "title"}
+
+
+def test_active_request_manager_counts_duplicate_requests():
+    manager = ActiveRequestManger()
+    request = Request("http://example.com")
+
+    manager.add(request)
+    manager.add(request)
+    assert len(manager) == 1
+
+    manager.remove(request)
+    assert len(manager) == 1
+
+    manager.remove(request)
+    assert len(manager) == 0
+
+    # 重复移除不应抛 KeyError
+    manager.remove(request)
+    assert len(manager) == 0
+
+
+class _NullDownloader(DownloaderBase):
+    async def download(self, request):
+        return _response(request)
+
+
+class _AsyncListSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+
+    async def parse(self, response):
+        # 异步回调返回列表：应被明确上报为 TransformTypeError，而不是静默丢弃。
+        return [Request("http://example.invalid/next")]
+
+
+def test_async_callback_return_value_is_not_silently_dropped():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+        }
+    )
+    crawler = Crawler(_AsyncListSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    stats = crawler.stats.get_stats()
+    assert stats.get("spider_exceptions/TransformTypeError") == 1

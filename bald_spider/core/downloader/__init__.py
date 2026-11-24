@@ -1,4 +1,4 @@
-from typing import Final, Set, Self
+from typing import Final, Self
 from contextlib import asynccontextmanager
 from bald_spider import Request
 from bald_spider.http.response import Response
@@ -56,15 +56,18 @@ class DownloaderBase(ABC, metaclass=DwonloaderMeta):
 
 class ActiveRequestManger:
     def __init__(self):
-        self._active: Final[Set] = set()
+        # 以请求对象为键计数：同一个 Request 并发/重复进入时不会误删。
+        self._active: Final[dict] = {}
 
     def add(self, request):
-        # print("add request", request)
-        self._active.add(request)
+        self._active[request] = self._active.get(request, 0) + 1
 
     def remove(self, request):
-        # print("remove request", request)
-        self._active.remove(request)
+        count = self._active.get(request, 0) - 1
+        if count > 0:
+            self._active[request] = count
+        else:
+            self._active.pop(request, None)
 
     @asynccontextmanager
     async def __call__(self, request):

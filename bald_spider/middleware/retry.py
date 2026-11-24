@@ -9,9 +9,7 @@ from typing import List
 from asyncio.exceptions import TimeoutError
 from aiohttp import ClientConnectionError, ClientConnectorError, ClientResponseError, ClientTimeout
 from aiohttp.client_exceptions import ClientPayloadError, ClientConnectorSSLError
-from httpx import ConnectError, ReadTimeout, RemoteProtocolError
-from httpcore import ReadError
-from anyio import EndOfStream
+from httpx import ConnectError, ReadError, ReadTimeout, RemoteProtocolError
 from bald_spider.stats_collector import StatsCollector
 from bald_spider.utils.log import get_logger
 
@@ -22,7 +20,6 @@ _retry_exceptions = [
     ClientResponseError,
     RemoteProtocolError,
     ReadError,
-    EndOfStream,
     ConnectError,
     TimeoutError,
     ClientPayloadError,
