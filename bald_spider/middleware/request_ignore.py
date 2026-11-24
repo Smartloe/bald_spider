@@ -21,7 +21,6 @@ class RequestIngore:
         if reason:
             self.stats.inc_value(f"request_ignore_count/{reason}")
 
-    @classmethod
-    def process_exception(_request, exception, _spider):
+    def process_exception(self, request, exception, _spider):
         if isinstance(exception, IgnoreRequest):
             return True

@@ -45,4 +45,6 @@ class Scheduler:
             await asyncio.sleep(interval)
 
     def __len__(self):
+        if self.request_queue is None:
+            return 0
         return self.request_queue.qsize()

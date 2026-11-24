@@ -63,7 +63,7 @@ class CrawlerProcess:
     def __init__(self, settings=None):
         self.crawlers: Final[Set] = set()
         self._active: Final[Set] = set()
-        self.settings = settings
+        self.settings = settings if settings is not None else SettingsManager()
         try:
             signal.signal(signal.SIGINT, self._shutdown)
         except ValueError:

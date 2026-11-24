@@ -7,6 +7,7 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from bald_spider import Request, Response
@@ -17,6 +18,7 @@ from bald_spider.items import Field
 from bald_spider.items.items import Item
 from bald_spider.middleware.default_header import DefaultHeader
 from bald_spider.middleware.middleware_manager import MiddlewareManager
+from bald_spider.middleware.request_ignore import RequestIngore
 from bald_spider.middleware.response_filter import ResponseFilter
 from bald_spider.middleware.retry import Retry
 from bald_spider.settings.settings_manager import SettingsManager
@@ -257,3 +259,58 @@ def test_async_callback_return_value_is_not_silently_dropped():
 
     stats = crawler.stats.get_stats()
     assert stats.get("spider_exceptions/TransformTypeError") == 1
+
+
+def test_request_ignore_process_exception_is_bound_instance_method():
+    stats = SimpleNamespace(inc_value=lambda *args, **kwargs: None)
+    middleware = RequestIngore(stats=stats, log_level="INFO")
+    request = Request("http://example.com")
+
+    # 普通异常交给后续中间件处理
+    assert middleware.process_exception(request, ConnectionError("boom"), None) is None
+    # IgnoreRequest 表示已处理
+    assert middleware.process_exception(request, IgnoreRequest("ignored"), None) is True
+
+
+class _FlakyDownloader(DownloaderBase):
+    calls = 0
+
+    async def download(self, request):
+        type(self).calls += 1
+        if type(self).calls == 1:
+            raise httpx.ConnectError("boom")
+        return _response(request)
+
+
+class _PlainSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+
+    async def parse(self, response):
+        return None
+
+
+def test_retry_chain_works_with_request_ignore_middleware():
+    _FlakyDownloader.calls = 0
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _FlakyDownloader,
+            "MIDDLEWARES": [Retry, RequestIngore],
+            "RETRY_HTTP_CODES": [],
+            "IGNORE_HTTP_CODES": [],
+            "MAX_RETRY_TIMES": 2,
+            "RETRY_EXCEPTIONS": [],
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+        }
+    )
+    crawler = Crawler(_PlainSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    stats = crawler.stats.get_stats()
+    assert _FlakyDownloader.calls == 2
+    assert stats.get("retry_count") == 1
+    assert stats.get("response_received_count") == 1
+    assert "spider_exceptions/TypeError" not in stats
