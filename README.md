@@ -299,6 +299,10 @@ MAX_RETRY_TIMES = 3           # 最大重试次数
 DOWNLOAD_DELAY = 1.0          # 下载延迟（秒）
 ```
 
+### 中间件执行顺序
+
+`MIDDLEWARES` 中的 `process_request` 按配置顺序执行，而 `process_response` / `process_exception` 按**逆序**执行。需要重试时，请把 `Retry` 放在 `ResponseFilter` **之后**（即示例配置中的顺序），否则 500 响应会先被 `ResponseFilter` 抛出的 `IgnoreRequest` 拦截，导致重试失效。
+
 ### 支持的配置类型
 
 ```python

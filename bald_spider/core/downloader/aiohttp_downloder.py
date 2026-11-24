@@ -49,8 +49,13 @@ class AioDownloader(DownloaderBase):
 
     @staticmethod
     def structure_response(request, response, body):
+        # 使用下载器返回的最终 URL，确保重定向后的相对链接解析正确。
         return Response(
-            url=request.url, headers=dict(response.headers), body=body, request=request, status_code=response.status
+            url=str(response.url),
+            headers=dict(response.headers),
+            body=body,
+            request=request,
+            status_code=response.status,
         )
 
     async def send_request(self, session, request) -> ClientResponse:

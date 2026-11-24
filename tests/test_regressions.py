@@ -12,6 +12,8 @@ import pytest
 
 from bald_spider import Request, Response
 from bald_spider.core.downloader import ActiveRequestManger, DownloaderBase
+from bald_spider.core.downloader.aiohttp_downloder import AioDownloader
+from bald_spider.core.downloader.httpx_downloader import HTTPXDownloader
 from bald_spider.crawler import Crawler
 from bald_spider.exceptions import IgnoreRequest
 from bald_spider.items import Field
@@ -314,3 +316,62 @@ def test_retry_chain_works_with_request_ignore_middleware():
     assert stats.get("retry_count") == 1
     assert stats.get("response_received_count") == 1
     assert "spider_exceptions/TypeError" not in stats
+
+
+class _LifecycleSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+    opened_done = False
+
+    async def spider_opened(self):
+        await asyncio.sleep(0.01)
+        type(self).opened_done = True
+
+    async def parse(self, response):
+        return None
+
+
+class _OrderDownloader(DownloaderBase):
+    seen = []
+
+    async def download(self, request):
+        type(self).seen.append(_LifecycleSpider.opened_done)
+        return _response(request)
+
+
+def test_spider_opened_completes_before_first_request():
+    _LifecycleSpider.opened_done = False
+    _OrderDownloader.seen = []
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _OrderDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+        }
+    )
+    crawler = Crawler(_LifecycleSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert _OrderDownloader.seen == [True]
+
+
+def test_aiohttp_response_url_uses_final_url():
+    request = Request("http://old.example.com/old")
+    raw = SimpleNamespace(url="http://new.example.com/new/dir/page", headers={}, status=200)
+
+    response = AioDownloader.structure_response(request, raw, b"")
+
+    assert response.url == "http://new.example.com/new/dir/page"
+    assert response.urljoin("a.html") == "http://new.example.com/new/dir/a.html"
+
+
+def test_httpx_response_url_uses_final_url():
+    request = Request("http://old.example.com/old")
+    raw = SimpleNamespace(url="http://new.example.com/new/dir/page", headers={}, status_code=200)
+
+    response = HTTPXDownloader.structure_response(request, raw, b"")
+
+    assert response.url == "http://new.example.com/new/dir/page"
+    assert response.urljoin("a.html") == "http://new.example.com/new/dir/a.html"

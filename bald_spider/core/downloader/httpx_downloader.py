@@ -17,7 +17,9 @@ class HTTPXDownloader(DownloaderBase):
     async def download(self, request) -> Response | None:
         try:
             proxies = request.proxy
-            async with httpx.AsyncClient(timeout=self._timeout, proxy=proxies) as client:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, proxy=proxies, follow_redirects=True
+            ) as client:
                 self.logger.debug(f"request downloading: {request.url}, method: {request.method}")
                 response = await client.request(
                     method=request.method,
@@ -35,8 +37,9 @@ class HTTPXDownloader(DownloaderBase):
 
     @staticmethod
     def structure_response(request, response, body):
+        # 使用下载器返回的最终 URL，确保重定向后的相对链接解析正确。
         return Response(
-            url=request.url,
+            url=str(response.url),
             headers=dict(response.headers),
             body=body,
             request=request,

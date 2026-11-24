@@ -54,7 +54,8 @@ class Engine:
         await self._open_spider()
 
     async def _open_spider(self):
-        asyncio.create_task(self.crawler.subscriber.notify(spider_opened))
+        # 先等待 spider_opened 等钩子完成，保证 spider 级配置（如 headers）在首个请求前生效。
+        await self.crawler.subscriber.notify(spider_opened)
         # 启动处理器的后台处理任务
         asyncio.create_task(self.processor.process())
         crawling = asyncio.create_task(self.crawl())
