@@ -375,3 +375,52 @@ def test_httpx_response_url_uses_final_url():
 
     assert response.url == "http://new.example.com/new/dir/page"
     assert response.urljoin("a.html") == "http://new.example.com/new/dir/a.html"
+
+
+class _BusySpider(Spider):
+    start_urls = ["http://example.invalid/"]
+    closed_called = False
+
+    async def parse(self, response):
+        yield Request(self.start_urls[0], callback=self.parse)
+
+    async def spider_closed(self):
+        type(self).closed_called = True
+
+
+class _TrackingDownloader(DownloaderBase):
+    closed = False
+
+    async def download(self, request):
+        return _response(request)
+
+    async def close(self):
+        type(self).closed = True
+
+
+def test_cancellation_runs_cleanup_and_spider_closed():
+    _TrackingDownloader.closed = False
+    _BusySpider.closed_called = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _TrackingDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_BusySpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        await asyncio.sleep(0.3)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(scenario())
+
+    assert _TrackingDownloader.closed is True
+    assert _BusySpider.closed_called is True

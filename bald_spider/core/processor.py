@@ -16,7 +16,7 @@ class Processor:
             return
         self._processing = True
         try:
-            while not self.idle():
+            while len(self) > 0:
                 result = await self.queue.get()
                 if isinstance(result, Request):
                     await self.crawler.engine.enqueue_request(result)
@@ -26,6 +26,9 @@ class Processor:
                 self.queue.task_done()
         finally:
             self._processing = False
+            # 关闭处理循环与 enqueue 之间的竞态：若期间又有新元素，重新拉起处理任务。
+            if len(self) > 0:
+                asyncio.create_task(self.process())
 
     async def _process_item(self, item: Item):
         self.crawler.stats.inc_value("item_successful_count")
@@ -39,7 +42,7 @@ class Processor:
             asyncio.create_task(self.process())
 
     def idle(self):
-        return len(self) == 0
+        return len(self) == 0 and not self._processing
 
     def __len__(self):
         return self.queue.qsize()

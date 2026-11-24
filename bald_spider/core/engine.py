@@ -15,6 +15,16 @@ from bald_spider.utils.log import get_logger
 from bald_spider.utils.project import load_class
 
 
+class _CloseRequest(Request):
+    """唤醒阻塞在队列上的主循环；priority 极低，保证真实请求先被取出。"""
+
+    def __init__(self):
+        super().__init__("", priority=-(10**9))
+
+
+_CLOSE_SENTINEL = _CloseRequest()
+
+
 class Engine:
     def __init__(self, crawler):
         self.logger = get_logger(self.__class__.__name__)
@@ -27,6 +37,8 @@ class Engine:
         self.processor: Processor | None = None
         self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
         self.interval_log_task: asyncio.Task | None = None
+        self.start_requests_task: asyncio.Task | None = None
+        self.exit_monitor_task: asyncio.Task | None = None
         self.running = False
         self.normal = True
 
@@ -58,43 +70,66 @@ class Engine:
         await self.crawler.subscriber.notify(spider_opened)
         # 启动处理器的后台处理任务
         asyncio.create_task(self.processor.process())
-        crawling = asyncio.create_task(self.crawl())
-        # 这里可以做其他的事情
         self.interval_log_task = asyncio.create_task(
             self.scheduler.interval_log(self.settings.getint("INTERVAL"))
         )
-        await crawling
+        self.start_requests_task = asyncio.create_task(self._enqueue_start_requests())
+        self.exit_monitor_task = asyncio.create_task(self._monitor_exit())
+        try:
+            await self.crawl()
+        finally:
+            for task in (self.start_requests_task, self.exit_monitor_task):
+                if task is None or task.done():
+                    continue
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    self.logger.error(
+                        f"background task raised during shutdown: {exc.__class__.__name__}: {exc}",
+                        exc_info=(type(exc), exc, exc.__traceback__),
+                    )
+
+    async def _enqueue_start_requests(self):
+        """后台任务：把 start_requests 产出的请求逐个入队，不再依赖轮询。"""
+        try:
+            for request in self.start_requests:
+                await self.enqueue_request(request)
+        except Exception as exc:
+            self.logger.error(f"Error during start_requests: {exc}", exc_info=True)
+            await self.crawler.subscriber.notify(spider_error, exc, self.spider)
+        finally:
+            self.start_requests = None
+
+    async def _monitor_exit(self):
+        """所有工作完成后唤醒主循环。使用普通 sleep 轮询，避免 wait_for 的取消问题。"""
+        while self.running:
+            await asyncio.sleep(0.1)
+            if self.start_requests is None and await self._exit():
+                self.running = False
+                await self.scheduler.put_request(_CLOSE_SENTINEL)
+                return
 
     async def crawl(self):
-        """主逻辑"""
-        while self.running:
-            request = await self._get_next_request()
-            if request is not None:
+        """主逻辑：阻塞等待请求，收到哨兵后退出。"""
+        cancelled = False
+        try:
+            while self.running:
+                request = await self._get_next_request()
+                if request is _CLOSE_SENTINEL:
+                    self.running = False
+                    break
                 await self._crawl(request)
-                continue
-            if self.start_requests is not None:
-                try:
-                    start_request = next(self.start_requests)
-                except StopIteration:
-                    # 1.发起请求的task运行完毕
-                    self.start_requests = None
-                except Exception as e:
-                    # 2.start_requests 抛异常：记录并通知，避免静默吞掉后死循环
-                    self.start_requests = None
-                    self.logger.error(f"Error during start_requests: {e}", exc_info=True)
-                    asyncio.create_task(
-                        self.crawler.subscriber.notify(spider_error, e, self.spider)
-                    )
-                else:
-                    # 入队
-                    await self.enqueue_request(start_request)
-                    continue
-            # 3.调度器、下载器、任务、处理器是否都空闲
-            if not await self._exit():
-                continue
+        except asyncio.CancelledError:
+            # 取消时仍要完成资源清理与关闭事件，随后再向上传播。
+            cancelled = True
+        finally:
             self.running = False
-        if not self.running:
-            await self.close_spider()
+            await self.close_spider(cancel_tasks=cancelled)
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def _crawl(self, request):
         # 实现并发
@@ -142,6 +177,7 @@ class Engine:
         return await self.scheduler.next_request()
 
     async def _handle_spider_output(self, outputs):
+        count = 0
         async for spider_output in outputs:
             if isinstance(spider_output, (Request, Item)):
                 await self.processor.enqueue(spider_output)
@@ -150,20 +186,29 @@ class Engine:
                 raise spider_output
             else:
                 raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
+            count += 1
+            if count % 100 == 0:
+                # 用户可能返回无限同步生成器；定期让出事件循环，保证取消与超时能生效。
+                await asyncio.sleep(0)
 
     async def _exit(self):
         if self.scheduler.idle() and self.downloader.idle() and self.task_manager.all_done() and self.processor.idle():
             return True
         return False
 
-    async def close_spider(self):
+    async def close_spider(self, cancel_tasks=False):
         if self.interval_log_task is not None and not self.interval_log_task.done():
             self.interval_log_task.cancel()
             try:
                 await self.interval_log_task
             except asyncio.CancelledError:
                 pass
-        results = await asyncio.gather(*self.task_manager.current_task, return_exceptions=True)
+        tasks = list(self.task_manager.current_task)
+        if cancel_tasks:
+            # 取消场景下，在途任务可能仍在无限产出，必须先取消，否则关闭会永久挂起。
+            for task in tasks:
+                task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
                 self.logger.error(

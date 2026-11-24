@@ -17,8 +17,11 @@ class Scheduler:
         self.request_queue = SpoderPriorityQueue()
 
     async def next_request(self):
-        request = await self.request_queue.get()
-        return request
+        # 阻塞等待，由 Engine 在空闲时投放关闭哨兵唤醒，避免轮询与取消问题。
+        return await self.request_queue.get()
+
+    async def put_request(self, request):
+        await self.request_queue.put(request)
 
     async def enqueue_request(self, request):
         await self.request_queue.put(request)
