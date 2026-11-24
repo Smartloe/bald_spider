@@ -45,7 +45,7 @@ class MySpider(Spider):
 
 # run.py
 import asyncio
-from tests.baidu_spider.crawler import CrawlerProcess
+from bald_spider.crawler import CrawlerProcess
 from bald_spider.utils.project import get_settings
 from my_spider import MySpider
 
@@ -93,39 +93,60 @@ python run.py
 bald_spider/
 ├── bald_spider/                    # 主要包目录
 │   ├── __init__.py                # 包导出
-│   ├── main.py                    # 入口点
-│   ├── core/                      # 核心组件
-│   │   ├── engine.py             # 中央协调引擎
-│   │   ├── downloader.py         # HTTP请求处理
-│   │   └── scheduler.py          # 请求队列管理
-│   ├── http/                      # HTTP相关模块
-│   │   └── request.py            # 请求数据结构
-│   ├── items/                     # 数据项定义
-│   │   └── items.py              # 基础Item类
-│   ├── spider/                    # 爬虫框架
-│   │   └── __init__.py           # 基础Spider类
-│   ├── settings/                  # 配置管理
-│   │   ├── default_settings.py   # 默认配置
-│   │   └── settins_manager.py    # 设置加载/合并
-│   ├── utils/                     # 工具模块
-│   │   ├── spider.py             # 爬虫辅助函数
-│   │   ├── pqueue.py             # 自定义优先级队列
-│   │   └── project.py            # 项目设置工具
+│   ├── main.py                    # 包入口点
+│   ├── crawler.py                 # Crawler / CrawlerProcess
+│   ├── event.py                   # 事件常量
 │   ├── exceptions.py              # 自定义异常
-│   └── task_manager.py           # 并发控制
+│   ├── stats_collector.py         # 统计收集
+│   ├── subscriber.py              # 事件订阅/通知
+│   ├── task_manager.py            # 并发控制
+│   ├── core/                      # 核心组件
+│   │   ├── engine.py              # 中央协调引擎
+│   │   ├── processor.py           # 输出处理
+│   │   ├── scheduler.py           # 请求队列管理
+│   │   └── downloader/            # HTTP 下载器实现
+│   │       ├── aiohttp_downloder.py
+│   │       └── httpx_downloader.py
+│   ├── http/                      # HTTP 数据结构
+│   │   ├── request.py             # 请求
+│   │   └── response.py            # 响应
+│   ├── items/                     # 数据项定义
+│   │   └── items.py               # 基础 Item 类
+│   ├── middleware/                # 中间件
+│   │   ├── middleware_manager.py  # 中间件管理器
+│   │   ├── default_header.py
+│   │   ├── download_delay.py
+│   │   ├── request_ignore.py
+│   │   ├── response_code.py
+│   │   ├── response_filter.py
+│   │   └── retry.py
+│   ├── spider/                    # 爬虫框架
+│   │   └── __init__.py            # 基础 Spider 类
+│   ├── settings/                  # 配置管理
+│   │   ├── default_settings.py    # 默认配置
+│   │   └── settings_manager.py    # 设置加载/合并
+│   └── utils/                     # 工具模块
+│       ├── date.py
+│       ├── log.py
+│       ├── pqueue.py              # 自定义优先级队列
+│       ├── project.py             # 项目设置工具
+│       ├── spider.py              # 爬虫辅助函数
+│       └── system.py
 ├── tests/                         # 测试套件和示例
-│   ├── test_main.py              # 基础框架测试
-│   └── baidu_spider/             # 示例爬虫项目
-│       ├── spiders/              # 爬虫实现
-│       │   ├── baidu.py          # 百度示例爬虫
-│       │   └── baidu2.py         # 多爬虫示例
-│       ├── items.py              # 项目特定数据项
-│       ├── settings.py           # 项目配置
-│       ├── crawler.py            # 爬虫设置
-│       └── run.py                # 爬虫执行脚本
-├── pyproject.toml                # 现代Python包配置
-├── uv.lock                       # 依赖锁定文件
-└── README.md                     # 项目文档
+│   ├── test_main.py               # 基础框架测试
+│   ├── test_regressions.py        # 回归测试
+│   └── baidu_spider/              # 示例爬虫项目
+│       ├── spiders/               # 爬虫实现
+│       │   ├── baidu.py           # 百度示例爬虫
+│       │   └── baidu2.py          # 多爬虫示例
+│       ├── items.py               # 项目特定数据项
+│       ├── middleware.py          # 示例中间件
+│       ├── settings.py            # 项目配置
+│       └── run.py                 # 爬虫执行脚本
+├── main.py                        # 仓库根入口脚本
+├── pyproject.toml                 # 现代 Python 包配置
+├── uv.lock                        # 依赖锁定文件
+└── README.md                      # 项目文档
 ```
 
 ## 🎮 进阶用法

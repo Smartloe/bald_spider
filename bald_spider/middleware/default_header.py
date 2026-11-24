@@ -27,4 +27,5 @@ class DefaultHeader:
         if self.headers:
             for k, v in self.headers.items():
                 request.headers.setdefault(k, v)
-        return request
+        # 返回 None 表示继续走后续中间件/下载器；返回 request 会被视为短路并导致请求被重复入队。
+        return None

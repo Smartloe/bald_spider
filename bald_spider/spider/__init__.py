@@ -22,7 +22,7 @@ class Spider:
                 yield Request(getattr(self, "start_url"))
 
     def parse(self, response):
-        raise NotImplemented
+        raise NotImplementedError
 
     def __str__(self):
         return self.__class__.__name__

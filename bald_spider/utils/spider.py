@@ -1,5 +1,4 @@
 from inspect import isgenerator, isasyncgen, iscoroutinefunction
-from math import e
 from typing import Callable
 from bald_spider.exceptions import TransformTypeError
 

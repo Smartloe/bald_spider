@@ -28,20 +28,19 @@ class Response:
 
     @property
     def text(self):
-        if self._text_cache:
+        if self._text_cache is not None:
             return self._text_cache
         try:
             self._text_cache = self.body.decode(self.encoding)
         except UnicodeDecodeError:
+            _encoding_re = re.compile(r"charset=([\w-]+)", flags=re.I)
+            _encoding_string = self.headers.get("Content-Type", "") or self.headers.get("content-type", "")
+            _encoding = _encoding_re.search(_encoding_string)
+            if not _encoding:
+                raise DecodeError(f"can not decode {self.body} with {self.encoding}")
+            self.encoding = _encoding.group(1)
             try:
-                _encoding_re = re.compile(r"charset=([\w-]+)", flags=re.I)
-                _encoding_string = self.headers.get("Content-Type", "") or self.headers.get("content-type", "")
-                _encoding = _encoding_re.search(_encoding_string)
-                if _encoding:
-                    _encoding = _encoding.group(1)
-                    self._text_cache = self.body.decode(self.encoding)
-                else:
-                    raise DecodeError(f"can not decode {self.body} with {self.encoding}")
+                self._text_cache = self.body.decode(self.encoding)
             except UnicodeDecodeError as exc:
                 raise UnicodeDecodeError(exc.encoding, exc.object, exc.start, exc.end, f"{self.request}")
         return self._text_cache

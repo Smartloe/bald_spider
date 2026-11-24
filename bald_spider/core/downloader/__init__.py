@@ -1,12 +1,10 @@
-from tkinter import SE
-from typing import Final, Set
+from typing import Final, Set, Self
 from contextlib import asynccontextmanager
 from bald_spider import Request
 from bald_spider.http.response import Response
 from bald_spider.middleware.middleware_manager import MiddlewareManager
 from bald_spider.utils.log import get_logger
 from abc import ABC, abstractmethod, ABCMeta
-from typing_extensions import Self
 
 
 class DwonloaderMeta(ABCMeta):

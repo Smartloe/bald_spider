@@ -1,6 +1,5 @@
 import asyncio
 
-from httpx._transports import default
 from bald_spider.event import request_scheduled
 from bald_spider.utils.pqueue import SpoderPriorityQueue
 from bald_spider.utils.log import get_logger

@@ -13,8 +13,8 @@ class ResponseFilter:
         return o
 
     def process_response(self, request, response, spider):
-        if 200 <= response.status < 300:
+        if 200 <= response.status_code < 300:
             return response
-        if response.status in self.allowed_codes:
+        if response.status_code in self.allowed_codes:
             return response
         raise IgnoreRequest(f"response_status/non-200")

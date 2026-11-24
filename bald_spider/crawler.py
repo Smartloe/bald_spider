@@ -54,7 +54,7 @@ class Crawler:
         merge_settings(self.spider_cls, self.settings)
 
     async def close(self, reason="finished"):
-        asyncio.create_task(self.subscriber.notify(spider_closed))
+        await self.subscriber.notify(spider_closed)
         self.stats.close_spider(self.spider, reason)
 
 

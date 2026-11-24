@@ -93,7 +93,8 @@ class MiddlewareManager:
         if isinstance(response, Response):
             response = await self._process_response(request, response)
         if isinstance(response, Request):
-            await self.crawler.engine.enqueue_request(request)
+            # 入队中间件返回的请求（可能是重定向/重试生成的新请求），而不是原始请求。
+            await self.crawler.engine.enqueue_request(response)
             return None
         return response
 

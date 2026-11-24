@@ -92,10 +92,17 @@ class Engine:
     async def _crawl(self, request):
         # 实现并发
         async def crawl_task():
-            outputs = await self._fetch(request)
-            # 处理outputs
-            if outputs:
-                await self._handle_spider_output(outputs)
+            try:
+                outputs = await self._fetch(request)
+                # 处理outputs
+                if outputs:
+                    await self._handle_spider_output(outputs)
+            except Exception as exc:
+                self.crawler.stats.inc_value(f"spider_exceptions/{exc.__class__.__name__}")
+                self.logger.error(
+                    f"error while crawling {request}: {exc.__class__.__name__}: {exc}",
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
 
         # asyncio.create_task(crawl_task())
         await self.task_manager.semaphore.acquire()
@@ -143,7 +150,13 @@ class Engine:
         return False
 
     async def close_spider(self):
-        await asyncio.gather(*self.task_manager.current_task)
+        results = await asyncio.gather(*self.task_manager.current_task, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                self.logger.error(
+                    f"task raised unhandled exception during shutdown: {result.__class__.__name__}: {result}",
+                    exc_info=(type(result), result, result.__traceback__),
+                )
         await self.downloader.close()
         if self.normal:
             await self.crawler.close()

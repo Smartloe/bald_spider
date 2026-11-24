@@ -62,10 +62,10 @@ class Retry:
     def process_response(self, request, response, spider):
         if request.meta.get("dont_retry", False):
             return response
-        if response.status in self.ignore_http_codes:
+        if response.status_code in self.ignore_http_codes:
             return response
-        if response.status in self.retry_http_codes:
-            reason = f"response code: {response.status}"
+        if response.status_code in self.retry_http_codes:
+            reason = f"response code: {response.status_code}"
             return self._retry(request, reason, spider) or response
         return response
 
