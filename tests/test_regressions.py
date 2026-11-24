@@ -424,3 +424,86 @@ def test_cancellation_runs_cleanup_and_spider_closed():
 
     assert _TrackingDownloader.closed is True
     assert _BusySpider.closed_called is True
+
+
+class _SlowSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+    closed_called = False
+
+    async def parse(self, response):
+        return None
+
+    async def spider_closed(self):
+        type(self).closed_called = True
+
+
+class _SlowDownloader(DownloaderBase):
+    closed = False
+
+    async def download(self, request):
+        await asyncio.sleep(10)
+        return _response(request)
+
+    async def close(self):
+        type(self).closed = True
+
+
+def test_external_stop_interrupts_slow_download():
+    _SlowDownloader.closed = False
+    _SlowSpider.closed_called = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _SlowDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_SlowSpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        await asyncio.sleep(0.2)
+        # 模拟 CrawlerProcess._shutdown 的 Ctrl+C 行为
+        crawler.engine.running = False
+        crawler.engine.normal = False
+        await asyncio.wait_for(task, timeout=3)
+
+    asyncio.run(scenario())
+
+    assert _SlowDownloader.closed is True
+    assert _SlowSpider.closed_called is True
+
+
+class _EndlessStartSpider(Spider):
+    def start_requests(self):
+        while True:
+            yield Request("http://example.invalid/")
+
+    async def parse(self, response):
+        return None
+
+
+def test_endless_start_requests_can_be_stopped():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_EndlessStartSpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        await asyncio.sleep(0.3)
+        crawler.engine.running = False
+        crawler.engine.normal = False
+        await asyncio.wait_for(task, timeout=3)
+
+    asyncio.run(scenario())

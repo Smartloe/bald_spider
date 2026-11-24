@@ -95,8 +95,15 @@ class Engine:
     async def _enqueue_start_requests(self):
         """后台任务：把 start_requests 产出的请求逐个入队，不再依赖轮询。"""
         try:
+            count = 0
             for request in self.start_requests:
+                if not self.running:
+                    break
                 await self.enqueue_request(request)
+                count += 1
+                if count % 100 == 0:
+                    # 用户可能返回无限生成器；定期让出事件循环，保证取消/停机可生效。
+                    await asyncio.sleep(0)
         except Exception as exc:
             self.logger.error(f"Error during start_requests: {exc}", exc_info=True)
             await self.crawler.subscriber.notify(spider_error, exc, self.spider)
@@ -104,13 +111,17 @@ class Engine:
             self.start_requests = None
 
     async def _monitor_exit(self):
-        """所有工作完成后唤醒主循环。使用普通 sleep 轮询，避免 wait_for 的取消问题。"""
-        while self.running:
-            await asyncio.sleep(0.1)
+        """所有工作完成后（或被外部停机）唤醒主循环。使用普通 sleep 轮询，避免 wait_for 的取消问题。"""
+        while True:
+            if not self.running:
+                # 外部停机（如 Ctrl+C）：主循环可能仍阻塞在取队列上，投递哨兵唤醒。
+                await self.scheduler.put_request(_CLOSE_SENTINEL)
+                return
             if self.start_requests is None and await self._exit():
                 self.running = False
                 await self.scheduler.put_request(_CLOSE_SENTINEL)
                 return
+            await asyncio.sleep(0.1)
 
     async def crawl(self):
         """主逻辑：阻塞等待请求，收到哨兵后退出。"""
@@ -127,7 +138,7 @@ class Engine:
             cancelled = True
         finally:
             self.running = False
-            await self.close_spider(cancel_tasks=cancelled)
+            await self.close_spider(cancel_tasks=cancelled or not self.normal)
         if cancelled:
             raise asyncio.CancelledError
 
