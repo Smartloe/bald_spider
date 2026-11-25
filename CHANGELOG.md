@@ -16,10 +16,10 @@
 ### 🚀 改进
 - 支持异步生成器形式的 `start_requests` 与事件订阅
 - HTTPX 下载器复用连接、跟随重定向并支持关闭
-- 有界队列提供背压（`SCHEDULER_QUEUE_SIZE` / `PROCESSOR_QUEUE_SIZE`）
+- 调度队列支持上限，为生产者提供背压（`SCHEDULER_QUEUE_SIZE`）
 - 中间件 `process_exception` 语义收紧：仅 `True` 表示已处理
 - 可中断信号量，`Ctrl+C` 可及时退出
-- 新增 32 项回归测试
+- 新增多项回归测试（覆盖引擎退出、取消、背压、中间件语义等）
 
 ## [0.1.0] - 2024-11-24
 

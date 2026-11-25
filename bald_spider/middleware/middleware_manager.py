@@ -5,7 +5,6 @@ from bald_spider.exceptions import (
     InvalidOutputError,
     MiddlewareInitError,
     NotConfigured,
-    RequestMethodError,
 )
 from bald_spider.http.response import Response
 from bald_spider.http.request import Request
@@ -82,8 +81,6 @@ class MiddlewareManager:
     async def download(self, request: Request) -> Response | None:
         try:
             response = await self._process_request(request)
-        except KeyError:
-            raise RequestMethodError(f"{request.method.lower()} is not supported.")
         except IgnoreRequest as exc:
             await self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider)
             response = await self._process_exception(request, exc)

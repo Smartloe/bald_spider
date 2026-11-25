@@ -226,6 +226,14 @@ item["price"] = 99.0
 `parse` 及 `callback` 可以是普通函数、生成器、`async def` 协程或**异步生成器**：
 
 ```python
+from bald_spider.items import Field
+from bald_spider.items.items import Item
+
+
+class PageItem(Item):
+    url = Field()
+
+
 class CallbackSpider(Spider):
     start_urls = ["https://example.com"]
 
@@ -235,7 +243,9 @@ class CallbackSpider(Spider):
             yield Request(response.urljoin(link), callback=self.parse_detail)
 
     def parse_detail(self, response):
-        yield {"url": response.url}  # 普通生成器同样支持
+        item = PageItem()
+        item["url"] = response.url
+        yield item  # 回调只接受 Request / Item
 ```
 
 > 回调的返回值必须是生成器 / 异步生成器；返回其他类型会被包装为 `TransformTypeError` 并记录到 `spider_exceptions/*` 统计，不会静默丢弃。
@@ -438,7 +448,6 @@ python run.py
 | `INTERVAL` | `5` | 统计日志间隔（秒） |
 | `STATS_DUMP` | `True` | 结束时打印统计 |
 | `SCHEDULER_QUEUE_SIZE` | `1000` | 调度队列上限，`0` 表示不限制 |
-| `PROCESSOR_QUEUE_SIZE` | `1000` | 处理器队列上限，`0` 表示不限制 |
 | `MIDDLEWARES` | `[]` | 启用的中间件；默认为空 |
 | `USER_AGENT` | `""` | 默认 User-Agent（配合 `DefaultHeader`） |
 | `DEFAULT_HEADERS` | `{}` | 默认请求头（配合 `DefaultHeader`） |
@@ -502,7 +511,7 @@ settings.getdict("DEFAULT_HEADERS", {}) # 字典
 ## ⚠️ 已知限制
 
 - **请求去重尚未实现**：同一 URL 会被重复抓取（`Engine._schedule_request` 中为 TODO）。
-- **背压可配置**：调度器与处理器队列默认上限 1000（`SCHEDULER_QUEUE_SIZE` / `PROCESSOR_QUEUE_SIZE`），超限时生产者会等待；设为 `0` 可关闭限制。无限生产者下请保持有界。
+- **背压可配置**：调度队列默认上限 1000（`SCHEDULER_QUEUE_SIZE`），超限时生产者会等待；设为 `0` 可关闭限制。
 - **无数据管道与持久化**：`Item` 目前只做计数与事件通知，需自行处理存储。
 - **无分布式支持与 Web 界面**：属于后续规划。
 - `HTTPXDownloader` 在设置 per-request `proxy` 时会退化为一次性 client。

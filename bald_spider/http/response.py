@@ -32,6 +32,8 @@ class Response:
             return self._text_cache
         try:
             self._text_cache = self.body.decode(self.encoding)
+        except LookupError as exc:
+            raise DecodeError(f"unknown encoding {self.encoding!r}: {exc}") from exc
         except UnicodeDecodeError:
             _encoding_re = re.compile(r"charset=([\w-]+)", flags=re.I)
             _encoding_string = ""
@@ -47,6 +49,8 @@ class Response:
                 self._text_cache = self.body.decode(self.encoding)
             except UnicodeDecodeError as exc:
                 raise UnicodeDecodeError(exc.encoding, exc.object, exc.start, exc.end, f"{self.request}")
+            except LookupError as exc:
+                raise DecodeError(f"unknown encoding {self.encoding!r}: {exc}") from exc
         return self._text_cache
 
     def xpath(self, xpath_sting):

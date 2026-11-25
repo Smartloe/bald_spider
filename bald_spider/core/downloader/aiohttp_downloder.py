@@ -1,6 +1,7 @@
 from bald_spider import Response
 from aiohttp import ClientSession, TCPConnector, BaseConnector, ClientTimeout, ClientResponse, TraceConfig
 from bald_spider.core.downloader import DownloaderBase
+from bald_spider.exceptions import RequestMethodError
 
 
 class AioDownloader(DownloaderBase):
@@ -59,7 +60,11 @@ class AioDownloader(DownloaderBase):
         )
 
     async def send_request(self, session, request) -> ClientResponse:
-        return await self.request_method[request.method.lower()](session, request)
+        try:
+            sender = self.request_method[request.method.lower()]
+        except KeyError:
+            raise RequestMethodError(f"{request.method.lower()} is not supported.")
+        return await sender(session, request)
 
     @staticmethod
     async def _get(session, request) -> ClientResponse:

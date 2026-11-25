@@ -13,11 +13,15 @@ class LoggerManager:
         def gen_logger():
             # 使用标准的 getLogger 方法创建 logger
             _logger = getLogger(name)
-            _logger.handlers.clear()  # 清除可能存在的默认处理器
+            # 只移除本框架添加的 handler，保留用户或其他库已安装的 handler。
+            _logger.handlers = [
+                h for h in _logger.handlers if not getattr(h, "_bald_spider_handler", False)
+            ]
 
             # 创建格式化器和处理器
             logger_format = Formatter(log_format)
             handler = StreamHandler()
+            handler._bald_spider_handler = True
             handler.setFormatter(logger_format)
 
             # 设置日志级别

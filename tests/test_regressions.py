@@ -18,7 +18,7 @@ from bald_spider.core.downloader.httpx_downloader import HTTPXDownloader
 from bald_spider.core.processor import Processor
 from bald_spider.crawler import Crawler
 from bald_spider.event import item_successful, response_received
-from bald_spider.exceptions import IgnoreRequest, InvalidOutputError
+from bald_spider.exceptions import DecodeError, IgnoreRequest, InvalidOutputError, RequestMethodError
 from bald_spider.items import Field
 from bald_spider.items.items import Item
 from bald_spider.middleware.default_header import DefaultHeader
@@ -857,7 +857,6 @@ def test_queue_limits_apply_backpressure_to_endless_producer():
         {
             "DOWNLOADER": _ShortSleepDownloader,
             "SCHEDULER_QUEUE_SIZE": 2,
-            "PROCESSOR_QUEUE_SIZE": 2,
             "LOG_LEVEL": "CRITICAL",
             "STATS_DUMP": False,
             "REQUEST_TIMEOUT": 1,
@@ -870,16 +869,13 @@ def test_queue_limits_apply_backpressure_to_endless_producer():
     async def scenario():
         task = asyncio.create_task(crawler.crawl())
         await asyncio.sleep(0.3)
-        sizes = (len(crawler.engine.scheduler), len(crawler.engine.processor))
+        scheduler_size = len(crawler.engine.scheduler)
         crawler.engine.running = False
         crawler.engine.normal = False
         await asyncio.wait_for(task, timeout=3)
-        return sizes
+        return scheduler_size
 
-    scheduler_size, processor_size = asyncio.run(scenario())
-
-    assert scheduler_size <= 2
-    assert processor_size <= 2
+    assert asyncio.run(scenario()) <= 2
 
 
 def test_response_text_handles_content_type_case_insensitively():
@@ -901,3 +897,103 @@ def test_download_delay_supports_new_and_legacy_range_keys():
         SettingsManager({"DOWNLOAD_DELAY": 1, "RANDEOM_RANGE": (2, 3)}), "INFO"
     )
     assert (legacy.floor, legacy.upper) == (2, 3)
+
+
+class _WideSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+
+    async def parse(self, response):
+        depth = response.meta.get("depth", 0)
+        if depth >= 2:
+            return
+        for index in range(10):
+            yield Request(
+                f"http://example.invalid/{depth}/{index}",
+                callback=self.parse,
+                meta={"depth": depth + 1},
+            )
+
+
+def test_bounded_queues_with_multi_level_yields_do_not_deadlock():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "SCHEDULER_QUEUE_SIZE": 10,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 4,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_WideSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("request_scheduler_count") == 111
+    assert crawler.stats.get_value("response_received_count") == 111
+
+
+class _HeaderSpider(Spider):
+    user_agent = "SpiderUA"
+    default_headers = {"X-Spider": "1"}
+
+
+def test_default_header_reads_spider_attributes_lazily():
+    middleware = DefaultHeader(user_agent="", headers={}, spider=None)
+    request = Request("http://example.com")
+
+    middleware.process_request(request, _HeaderSpider())
+
+    assert request.headers["User-Agent"] == "SpiderUA"
+    assert request.headers["X-Spider"] == "1"
+
+
+def test_logger_manager_preserves_user_handlers():
+    import logging as logging_module
+
+    from bald_spider.utils.log import get_logger
+
+    name = "bald_spider_test_custom_logger"
+    logger = logging_module.getLogger(name)
+    user_handler = logging_module.NullHandler()
+    logger.addHandler(user_handler)
+    try:
+        get_logger(name, "INFO")
+        assert user_handler in logger.handlers
+    finally:
+        logger.removeHandler(user_handler)
+
+
+def test_response_text_unknown_charset_raises_decode_error():
+    request = Request("http://example.com", encoding="utf-8")
+    response = _response(
+        request,
+        headers={"Content-Type": "text/html; charset=no-such-codec"},
+        body=b"\xff\xfe",
+    )
+
+    with pytest.raises(DecodeError):
+        _ = response.text
+
+
+def test_middleware_key_error_is_not_masked_as_request_method_error():
+    manager = MiddlewareManager(_FakeCrawler())
+    request = Request("http://example.com")
+
+    async def process_request(request):
+        raise KeyError("from-middleware")
+
+    manager._process_request = process_request
+
+    with pytest.raises(KeyError):
+        asyncio.run(manager.download(request))
+
+
+def test_aiohttp_downloader_rejects_unsupported_method():
+    crawler = SimpleNamespace(settings=SettingsManager({"LOG_LEVEL": "CRITICAL"}))
+    downloader = AioDownloader(crawler)
+    request = Request("http://example.com", method="PUT")
+
+    with pytest.raises(RequestMethodError):
+        asyncio.run(downloader.send_request(None, request))

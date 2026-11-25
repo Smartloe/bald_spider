@@ -11,9 +11,8 @@ USE_SESSION = True
 DOWNLOADER = "bald_spider.core.downloader.aiohttp_downloder.AioDownloader"
 INTERVAL = 5
 STATS_DUMP = True
-# 队列上限（0 表示不限制）；用于为无限生产者提供背压
+# 调度队列上限（0 表示不限制）；用于为生产者提供背压
 SCHEDULER_QUEUE_SIZE = 1000
-PROCESSOR_QUEUE_SIZE = 1000
 # middlewares
 MIDDLEWARES = []
 USER_AGENT = ""
