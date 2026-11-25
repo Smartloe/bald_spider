@@ -18,7 +18,7 @@ uv pip install -e .
 pip install -e .
 ```
 
-### 5分钟上手
+### 5 分钟上手
 
 创建你的第一个爬虫（以下三个文件放在同一目录）：
 
@@ -44,7 +44,7 @@ class MySpider(Spider):
         for i in range(5):
             yield Request(
                 url=f"https://httpbin.org/delay/{i}",
-                callback=self.parse_detail
+                callback=self.parse_detail,
             )
 
     def parse_detail(self, response):
@@ -54,6 +54,7 @@ class MySpider(Spider):
 ```python
 # run.py
 import asyncio
+
 from bald_spider.crawler import CrawlerProcess
 from bald_spider.utils.project import get_settings
 from my_spider import MySpider
@@ -76,52 +77,86 @@ if __name__ == "__main__":
 python run.py
 ```
 
+> `get_settings()` 会导入当前目录下的 `settings.py`。不传参时 `CrawlerProcess()` 使用内置默认配置，但 `get_settings()` 需要该模块存在。
+
 ## 🏗️ 核心特性
 
 ### ⚡ 异步高性能
 - 基于 asyncio 的异步架构，支持高并发网络请求
-- 智能并发控制，默认支持16个并发请求
-- 内存友好的生成器模式，避免大量数据加载
+- 信号量并发控制，默认 16 个并发任务
+- 生成器 / 异步生成器回调，内存友好
+- 内置 `AioDownloader`（aiohttp）与 `HTTPXDownloader`（httpx），默认复用连接
 
 ### 🎯 智能调度
-- 优先级队列支持，priority 数值越大越先处理
-- 基于优先级的请求调度
-- 非阻塞的请求队列管理
+- 优先级队列：`priority` 数值越大越先处理
+- 请求在调度器、下载器、处理器之间流式传递
+- 阻塞式取队列 + 空闲监视器，工作耗尽后自动退出
+
+### 🧩 中间件机制
+- `process_request` / `process_response` / `process_exception` 三段式处理
+- 内置默认请求头、下载延迟、状态码过滤、重试、状态码统计、异常忽略
+- 支持按项目或按爬虫配置启用
 
 ### 🔧 灵活配置
-- 分层配置系统：默认配置 → 项目配置 → 爬虫自定义配置
-- 支持多种数据类型：int、float、bool、list
-- 运行时配置动态调整
+- 分层配置系统：默认配置 → 项目配置 → 爬虫 `custom_settings`
+- 支持 int / float / bool / list / dict 类型读取
+- 文件内 `settings.py` 与爬虫级配置合并
 
-### 📦 模块化设计
-- 清晰的组件分离：引擎、下载器、调度器、任务管理器
-- 易于扩展和定制
-- 支持中间件和插件系统
+### 🛡️ 生命周期与停机
+- `spider_opened` 在首个请求发出前完成
+- 正常结束、异常、任务取消、`Ctrl+C` 都会关闭下载器并触发 `spider_closed`
+- 停机时取消在途任务，不会无限等待慢请求
+
+## 🔄 工作流程
+
+```
+Spider.start_requests
+        │
+        ▼
+   Scheduler（优先级队列）
+        │  Request
+        ▼
+   Downloader.fetch ──► MiddlewareManager.download
+        │                     │ process_request
+        │                     ▼
+        │              HTTP 下载器（aiohttp / httpx）
+        │                     │ process_response / process_exception
+        ▼                     ▼
+      Response
+        │
+        ▼
+   Engine._fetch ──► callback(parse) ──► transform（生成器 / 异步生成器）
+        │
+        ▼
+   Processor 队列 ──► 新 Request 重新入队 / Item 计数与事件
+```
 
 ## 📁 项目结构
 
 ```
 bald_spider/
 ├── bald_spider/                    # 主要包目录
-│   ├── __init__.py                # 包导出
+│   ├── __init__.py                # 包导出（Request / Response / Item / main）
 │   ├── main.py                    # 包入口点
 │   ├── crawler.py                 # Crawler / CrawlerProcess
 │   ├── event.py                   # 事件常量
 │   ├── exceptions.py              # 自定义异常
 │   ├── stats_collector.py         # 统计收集
 │   ├── subscriber.py              # 事件订阅/通知
-│   ├── task_manager.py            # 并发控制
+│   ├── task_manager.py            # 并发与任务管理
 │   ├── core/                      # 核心组件
-│   │   ├── engine.py              # 中央协调引擎
-│   │   ├── processor.py           # 输出处理
-│   │   ├── scheduler.py           # 请求队列管理
+│   │   ├── engine.py              # 中央协调引擎与退出模型
+│   │   ├── processor.py           # 输出处理（Request 重新入队 / Item）
+│   │   ├── scheduler.py           # 请求队列与周期统计
 │   │   └── downloader/            # HTTP 下载器实现
 │   │       ├── aiohttp_downloder.py
 │   │       └── httpx_downloader.py
 │   ├── http/                      # HTTP 数据结构
-│   │   ├── request.py             # 请求
-│   │   └── response.py            # 响应
+│   │   ├── __init__.py
+│   │   ├── request.py             # 请求（优先级 / meta / 回调）
+│   │   └── response.py            # 响应（text / xpath / json / urljoin）
 │   ├── items/                     # 数据项定义
+│   │   ├── __init__.py            # Field / ItemMeta
 │   │   └── items.py               # 基础 Item 类
 │   ├── middleware/                # 中间件
 │   │   ├── middleware_manager.py  # 中间件管理器
@@ -134,30 +169,31 @@ bald_spider/
 │   ├── spider/                    # 爬虫框架
 │   │   └── __init__.py            # 基础 Spider 类
 │   ├── settings/                  # 配置管理
+│   │   ├── __init__.py
 │   │   ├── default_settings.py    # 默认配置
 │   │   └── settings_manager.py    # 设置加载/合并
 │   └── utils/                     # 工具模块
 │       ├── date.py
 │       ├── log.py
-│       ├── pqueue.py              # 自定义优先级队列
-│       ├── project.py             # 项目设置工具
-│       ├── spider.py              # 爬虫辅助函数
+│       ├── pqueue.py              # 优先级队列
+│       ├── project.py             # 项目设置/动态导入
+│       ├── spider.py              # 回调输出转换
 │       └── system.py
 ├── tests/                         # 测试套件和示例
-│   ├── test_main.py               # 基础框架测试
+│   ├── test_main.py               # 包入口测试
 │   ├── test_regressions.py        # 回归测试
 │   └── baidu_spider/              # 示例爬虫项目
 │       ├── spiders/               # 爬虫实现
-│       │   ├── baidu.py           # 百度示例爬虫
-│       │   └── baidu2.py          # 多爬虫示例
-│       ├── items.py               # 项目特定数据项
-│       ├── middleware.py          # 示例中间件
-│       ├── settings.py            # 项目配置
-│       └── run.py                 # 爬虫执行脚本
+│       │   ├── baidu.py
+│       │   └── baidu2.py
+│       ├── items.py
+│       ├── middleware.py
+│       ├── settings.py
+│       └── run.py
 ├── main.py                        # 仓库根入口脚本
-├── pyproject.toml                 # 现代 Python 包配置
+├── pyproject.toml                 # 项目与工具配置
 ├── uv.lock                        # 依赖锁定文件
-└── README.md                      # 项目文档
+└── README.md
 ```
 
 ## 🎮 进阶用法
@@ -177,32 +213,67 @@ class ProductItem(Item):
 
 item = ProductItem()
 item["name"] = "示例商品"
+item["price"] = 99.0
 ```
 
-注意：`Item` 的字段必须通过 `item["field"] = value` 赋值，不能使用 `item.field = value`。
+注意：
+
+- 字段必须通过 `item["field"] = value` 赋值，不能使用 `item.field = value`。
+- `Item` 支持继承，子类会合并父类的 `FIELDS`。
+
+### 同步 / 异步回调
+
+`parse` 及 `callback` 可以是普通函数、生成器、`async def` 协程或**异步生成器**：
+
+```python
+class CallbackSpider(Spider):
+    start_urls = ["https://example.com"]
+
+    # 异步生成器：边解析边产出 Request / Item
+    async def parse(self, response):
+        for link in response.xpath("//a/@href").getall():
+            yield Request(response.urljoin(link), callback=self.parse_detail)
+
+    def parse_detail(self, response):
+        yield {"url": response.url}  # 普通生成器同样支持
+```
+
+> 回调的返回值必须是生成器 / 异步生成器；返回其他类型会被包装为 `TransformTypeError` 并记录到 `spider_exceptions/*` 统计，不会静默丢弃。
+
+`start_requests` 同样支持同步或异步生成器：
+
+```python
+class AsyncStartSpider(Spider):
+    async def start_requests(self):
+        yield Request("https://example.com", callback=self.parse)
+```
 
 ### 高级请求配置
 
 ```python
 from bald_spider.http.request import Request
 
+
 class AdvancedSpider(Spider):
     start_urls = ["https://api.example.com"]
-    
+
     def start_requests(self):
         for url in self.start_urls:
             yield Request(
                 url=url,
                 headers={
                     "User-Agent": "BaldSpider/1.0",
-                    "Authorization": "Bearer token"
+                    "Authorization": "Bearer token",
                 },
                 method="POST",
                 body='{"query": "data"}',
-                priority=10,  # 高优先级
-                callback=self.parse
+                priority=10,          # 数值越大越先处理
+                callback=self.parse,
+                meta={"dont_retry": True},
             )
 ```
+
+请求还支持 `cookie`、`proxy`（URL 字符串）、`encoding`。
 
 ### 爬虫级配置
 
@@ -210,13 +281,85 @@ class AdvancedSpider(Spider):
 class HighConcurrencySpider(Spider):
     start_urls = ["https://example.com"]
     custom_settings = {
-        "CONCURRENCY": 32,  # 为这个爬虫设置更高的并发数
-        "REQUEST_TIMEOUT": 30
+        "CONCURRENCY": 32,
+        "REQUEST_TIMEOUT": 30,
     }
-    
+
     async def parse(self, response):
-        # 解析逻辑
         pass
+```
+
+### 生命周期与事件
+
+```python
+class LifecycleSpider(Spider):
+    start_urls = ["https://example.com"]
+
+    async def spider_opened(self):
+        # 在首个请求发出前完成，适合登录、初始化请求头
+        self.default_headers = {"Authorization": "Bearer token"}
+
+    async def spider_closed(self):
+        # 正常结束、异常、取消、Ctrl+C 时都会触发
+        pass
+```
+
+框架会自动把 `spider_opened` / `spider_closed` 事件绑定到 Spider 的同名方法。其余事件会照常派发，可通过 `crawler.subscriber` 手动订阅：
+
+```python
+from bald_spider.event import item_successful, spider_error
+
+
+class SubscribeSpider(Spider):
+    start_urls = ["https://example.com"]
+
+    async def spider_opened(self):
+        self.crawler.subscriber.subscriber(self.on_item, event=item_successful)
+        self.crawler.subscriber.subscriber(self.on_error, event=spider_error)
+
+    async def on_item(self, item, spider):
+        print(f"产出 Item: {item}")
+
+    async def on_error(self, exception, spider):
+        # 回调产出异常对象时触发，同时计入 spider_exceptions/* 统计
+        print(f"爬虫异常: {exception}")
+```
+
+可用事件：`spider_opened`、`spider_closed`、`spider_error`、`request_scheduled`、`response_received`、`item_successful`、`ignore_request`。
+
+### 自定义中间件
+
+```python
+from bald_spider.middleware import BaseMiddleware
+
+
+class CustomMiddleware(BaseMiddleware):
+    def process_request(self, request, spider):
+        # 修改后返回 None；返回 Request 会被视为短路并重新入队
+        request.headers["User-Agent"] = "CustomBot/1.0"
+        return None
+
+    async def process_response(self, request, response, spider):
+        # 返回 Response 继续处理；返回 Request 则重新入队
+        return response
+
+    async def process_exception(self, request, exception, spider):
+        # 返回 Request/Response 表示已处理；返回 None 交给后续中间件
+        return None
+```
+
+在 `settings.py` 中启用：
+
+```python
+MIDDLEWARES = [
+    "middleware.CustomMiddleware",
+    "bald_spider.middleware.default_header.DefaultHeader",
+    "bald_spider.middleware.download_delay.DownloadDelay",
+    "bald_spider.middleware.response_filter.ResponseFilter",
+    "bald_spider.middleware.retry.Retry",
+    "bald_spider.middleware.response_code.ResponseCodeStats",
+    "bald_spider.middleware.request_ignore.RequestIngore",
+]
 ```
 
 ### 多爬虫项目
@@ -226,14 +369,20 @@ class HighConcurrencySpider(Spider):
 async def main():
     settings = get_settings()
     process = CrawlerProcess(settings)
-    
-    # 添加多个爬虫
+
     await process.crawl(MySpider)
     await process.crawl(AnotherSpider)
     await process.crawl(ThirdSpider)
-    
+
     await process.start()
 ```
+
+### 优雅停机
+
+- 正常结束：调度器、下载器、任务、处理器全部空闲后自动退出。
+- `Ctrl+C`：置停主循环，取消在途任务，关闭下载器并触发 `spider_closed`。
+- 程序化取消 `crawler.crawl()` 任务：同样会完成资源清理后再向上传播 `CancelledError`。
+- 已出队但尚未登记为任务的请求被计入在途，不会被误判为空闲而丢弃。
 
 ## 🔧 开发
 
@@ -241,7 +390,7 @@ async def main():
 
 ```bash
 # 安装开发依赖
-uv sync
+uv sync --extra dev
 
 # 或使用 pip
 pip install -e ".[dev]"
@@ -257,36 +406,45 @@ uv run pytest
 uv run pytest -v
 
 # 运行特定测试
-uv run pytest tests/test_main.py
+uv run pytest tests/test_regressions.py
 ```
 
 ### 代码格式化
 
 ```bash
-# 格式化代码
 uv run black .
-
-# 检查类型
-mypy bald_spider/
 ```
 
 ### 运行示例
 
 ```bash
-# 运行百度爬虫示例
 cd tests/baidu_spider
 python run.py
 ```
 
 ## ⚙️ 配置选项
 
-### 默认配置
+### 默认配置（`bald_spider/settings/default_settings.py`）
 
-```python
-# bald_spider/settings/default_settings.py
-CONCURRENCY = 16              # 最大并发请求数
-REQUEST_TIMEOUT = 60          # 请求超时时间（秒）
-```
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `CONCURRENCY` | `16` | 最大并发任务数 |
+| `LOG_LEVEL` | `"INFO"` | 日志级别 |
+| `VERIFY_SSL` | `True` | 是否校验 SSL 证书 |
+| `REQUEST_TIMEOUT` | `60` | 请求超时（秒） |
+| `USE_SESSION` | `True` | 是否复用 HTTP 连接 |
+| `DOWNLOADER` | `AioDownloader` | 下载器类路径 |
+| `INTERVAL` | `5` | 统计日志间隔（秒） |
+| `STATS_DUMP` | `True` | 结束时打印统计 |
+| `DOWNLOAD_DELAY` | `0` | 请求间隔（秒），`0` 表示不启用延迟中间件 |
+| `RANDOMNESS` | `True` | 延迟是否随机波动 |
+| `RANDEOM_RANGE` | `(0.75, 1.25)` | 随机延迟范围系数 |
+| `RETRY_HTTP_CODES` | `[408, 429, 500, 503, 504, 522, 524]` | 触发重试的状态码 |
+| `IGNORE_HTTP_CODES` | `[403, 404]` | 不重试的状态码 |
+| `MAX_RETRY_TIMES` | `2` | 最大重试次数 |
+| `ALLOWED_CODES` | `[]` | 额外允许的状态码 |
+
+> 默认配置**不启用任何中间件**。需要重试、默认请求头、下载延迟等能力时，请在 `settings.py` 中显式配置 `MIDDLEWARES`。
 
 ### 项目配置
 
@@ -294,9 +452,22 @@ REQUEST_TIMEOUT = 60          # 请求超时时间（秒）
 # settings.py
 PROJECT_NAME = "my_project"
 CONCURRENCY = 8               # 降低并发数
-REQUEST_TIMEOUT = 30          # 请求超时时间（秒）
+REQUEST_TIMEOUT = 30          # 请求超时（秒）
 MAX_RETRY_TIMES = 3           # 最大重试次数
 DOWNLOAD_DELAY = 1.0          # 下载延迟（秒）
+
+USER_AGENT = "MyBot/1.0"
+DEFAULT_HEADERS = {
+    "User-Agent": "MyBot/1.0",
+    "Connection": "keep-alive",
+}
+
+MIDDLEWARES = [
+    "bald_spider.middleware.default_header.DefaultHeader",
+    "bald_spider.middleware.download_delay.DownloadDelay",
+    "bald_spider.middleware.response_filter.ResponseFilter",
+    "bald_spider.middleware.retry.Retry",
+]
 ```
 
 ### 中间件执行顺序
@@ -306,20 +477,28 @@ DOWNLOAD_DELAY = 1.0          # 下载延迟（秒）
 ### 支持的配置类型
 
 ```python
-# 获取不同类型的配置值
 settings.getint("CONCURRENCY", 16)      # 整数
-settings.getfloat("TIMEOUT", 30.0)      # 浮点数
-settings.getbool("DEBUG", False)        # 布尔值
-settings.getlist("PROXIES", [])         # 列表
+settings.getfloat("DOWNLOAD_DELAY", 0)  # 浮点数
+settings.getbool("VERIFY_SSL", True)    # 布尔值
+settings.getlist("MIDDLEWARES", [])     # 列表
+settings.getdict("DEFAULT_HEADERS", {}) # 字典
 ```
 
 ## 📊 性能特性
 
-- **异步优先设计**：基于 asyncio 的高性能并发处理
-- **内存效率**：生成器模式避免大量数据加载
-- **I/O 优化**：异步操作避免网络请求阻塞
-- **可配置负载**：信号量控制防止服务器过载
-- **可扩展设计**：模块化架构支持水平扩展
+- **异步优先**：基于 asyncio 的高性能并发处理
+- **内存效率**：生成器 / 异步生成器回调，避免一次性加载大量数据
+- **连接复用**：aiohttp / httpx 下载器默认复用会话（`USE_SESSION=True`）
+- **可配置负载**：信号量限制并发，`DownloadDelay` 控制请求频率
+- **模块化**：引擎、调度器、下载器、处理器、中间件职责清晰，便于替换与扩展
+
+## ⚠️ 已知限制
+
+- **请求去重尚未实现**：同一 URL 会被重复抓取（`Engine._schedule_request` 中为 TODO）。
+- **无背压**：无限 `start_requests` / 无限解析输出会使调度队列持续增长，请自行控制产出速度。
+- **无数据管道与持久化**：`Item` 目前只做计数与事件通知，需自行处理存储。
+- **无分布式支持与 Web 界面**：属于后续规划。
+- `HTTPXDownloader` 在设置 per-request `proxy` 时会退化为一次性 client。
 
 ## 🤝 贡献
 
@@ -351,7 +530,7 @@ settings.getlist("PROXIES", [])         # 列表
 ## 📚 更多资源
 
 - **完整示例**：查看 `tests/baidu_spider/` 目录
-- **架构文档**：[ARCHITECTURE.md](ARCHITECTURE.md) - 详细的系统架构和组件设计
+- **架构文档**：[ARCHITECTURE.md](ARCHITECTURE.md) - 系统架构与数据流
 - **开发指南**：[DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) - 贡献指南和开发规范
 - **技术栈**：[TECH_STACK_AND_PREFERENCES.md](TECH_STACK_AND_PREFERENCES.md) - 技术选择和最佳实践
 - **项目概述**：[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) - 项目愿景和发展路线图
