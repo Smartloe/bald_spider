@@ -337,6 +337,8 @@ class SubscribeSpider(Spider):
 
 可用事件：`spider_opened`、`spider_closed`、`spider_error`、`request_scheduled`、`response_received`、`item_successful`、`ignore_request`。
 
+> 事件接收者必须是 `async def` 协程函数；同步函数会被跳过并记录错误，不会执行。
+
 ### 自定义中间件
 
 ```python
@@ -461,6 +463,8 @@ python run.py
 | `ALLOWED_CODES` | `[]` | 额外允许的状态码 |
 
 > 默认配置**不启用任何中间件**。需要重试、默认请求头、下载延迟等能力时，请在 `settings.py` 中显式配置 `MIDDLEWARES`。
+
+> 统计口径：`response_received_count` 按下载尝试累加（重试的每次响应也计入），不等于去重后的请求数。
 
 ### 项目配置
 

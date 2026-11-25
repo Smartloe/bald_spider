@@ -117,10 +117,25 @@ class Engine:
                         exc_info=(type(exc), exc, exc.__traceback__),
                     )
 
+    async def _close_start_requests(self, *objects):
+        """关闭 start_requests 原始对象及协程返回的生成器，执行其 finally。"""
+        seen = set()
+        for obj in objects:
+            if obj is None or id(obj) in seen:
+                continue
+            seen.add(id(obj))
+            try:
+                if isasyncgen(obj):
+                    await obj.aclose()
+                elif isgenerator(obj) or iscoroutine(obj):
+                    obj.close()
+            except Exception:
+                self.logger.exception("error while closing start_requests generator")
+
     async def _enqueue_start_requests(self):
         """后台任务：把 start_requests 产出的请求逐个入队，兼容生成器与协程。"""
+        source = self.start_requests
         try:
-            source = self.start_requests
             if iscoroutine(source):
                 source = await source
             count = 0
@@ -147,14 +162,7 @@ class Engine:
             self.logger.error(f"Error during start_requests: {exc}", exc_info=True)
             await self.crawler.subscriber.notify(spider_error, exc, self.spider)
         finally:
-            source = self.start_requests
-            try:
-                if isasyncgen(source):
-                    await source.aclose()
-                elif isgenerator(source) or iscoroutine(source):
-                    source.close()
-            except Exception:
-                self.logger.exception("error while closing start_requests generator")
+            await self._close_start_requests(self.start_requests, source)
             self.start_requests = None
 
     async def _monitor_exit(self):

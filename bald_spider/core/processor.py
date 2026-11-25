@@ -61,7 +61,9 @@ class Processor:
         finally:
             self._processing = False
             # 关闭处理循环与 enqueue 之间的竞态：若期间又有新元素，重新拉起处理任务。
+            # 此时当前任务尚未结束，必须先把 _task 置空，start() 才会真正新建任务。
             if not self._closed and len(self) > 0:
+                self._task = None
                 self.start()
 
     async def _process_item(self, item: Item):

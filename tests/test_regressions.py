@@ -1528,3 +1528,50 @@ def test_processor_survives_item_processing_exception():
 
     assert crawler.engine.calls == 2
     assert crawler.stats.get_value("processor_exceptions/RuntimeError") == 2
+
+
+class _CoroutineWrappedStartSpider(Spider):
+    closed = False
+    holder = {}
+
+    async def start_requests(self):
+        def generator():
+            try:
+                while True:
+                    yield Request("http://example.invalid/")
+            finally:
+                type(self).closed = True
+
+        type(self).holder["generator"] = generator()
+        return type(self).holder["generator"]
+
+    async def parse(self, response):
+        return None
+
+
+def test_coroutine_start_requests_generator_is_closed():
+    _CoroutineWrappedStartSpider.closed = False
+    _CoroutineWrappedStartSpider.holder = {}
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_CoroutineWrappedStartSpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        await asyncio.sleep(0.2)
+        crawler.engine.running = False
+        crawler.engine.normal = False
+        await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(scenario())
+
+    assert _CoroutineWrappedStartSpider.holder["generator"] is not None
+    assert _CoroutineWrappedStartSpider.closed is True
