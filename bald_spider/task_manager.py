@@ -7,7 +7,8 @@ from bald_spider.utils.log import get_logger
 class TaskManager:
     def __init__(self, total_concurrency=16):
         self.current_task: Final[Set] = set()
-        self.semaphore: Semaphore = Semaphore(total_concurrency)
+        # 并发数必须为正；0 会让主循环永久阻塞在信号量上。
+        self.semaphore: Semaphore = Semaphore(max(1, total_concurrency))
         self.logger = get_logger(self.__class__.__name__)
 
     def create_task(self, coroutine) -> Task:

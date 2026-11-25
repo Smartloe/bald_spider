@@ -260,6 +260,17 @@ class Engine:
     async def enqueue_request(self, request):
         await self._schedule_request(request)
 
+    async def requeue_request(self, request):
+        """重新入队（中间件返回 Request 时使用）。
+
+        交由无并发许可的 Processor 任务转交调度队列，避免持有信号量的
+        crawl_task 直接阻塞在有界调度队列上而与其他等待形成死锁。
+        """
+        if self.processor is not None:
+            await self.processor.enqueue(request)
+        else:
+            await self._schedule_request(request)
+
     async def _schedule_request(self, request):
         # TODO 去重
         await self.scheduler.enqueue_request(request)
@@ -294,7 +305,7 @@ class Engine:
         return False
 
     async def _close_resources(self):
-        """释放下载器与后台任务；可重复调用，用于正常关闭与启动失败兜底。"""
+        """释放下载器与后台任务；可重复调用，单步失败不影响其余清理。"""
         if self._closed:
             return
         self._closed = True
@@ -304,10 +315,18 @@ class Engine:
                 await self.interval_log_task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                self.logger.exception("error while cancelling interval log task")
         if self.processor is not None:
-            await self.processor.close()
+            try:
+                await self.processor.close()
+            except Exception:
+                self.logger.exception("error while closing processor")
         if self.downloader is not None:
-            await self.downloader.close()
+            try:
+                await self.downloader.close()
+            except Exception:
+                self.logger.exception("error while closing downloader")
 
     async def close_spider(self, cancel_tasks=False):
         if self._closed:

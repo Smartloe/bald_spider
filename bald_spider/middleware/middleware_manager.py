@@ -83,7 +83,11 @@ class MiddlewareManager:
             response = await self._process_request(request)
         except IgnoreRequest as exc:
             await self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider)
-            response = await self._process_exception(request, exc)
+            try:
+                response = await self._process_exception(request, exc)
+            except IgnoreRequest:
+                # 未配置 RequestIngore 等处理器时，忽略请求属于正常流程，不当作爬虫异常。
+                return None
         except Exception as exc:
             self._stats.inc_value(f"download_error/{exc.__class__.__name__}")
             response = await self._process_exception(request, exc)
@@ -95,8 +99,8 @@ class MiddlewareManager:
         if isinstance(response, Response):
             response = await self._process_response(request, response)
         if isinstance(response, Request):
-            # 入队中间件返回的请求（可能是重定向/重试生成的新请求），而不是原始请求。
-            await self.crawler.engine.enqueue_request(response)
+            # 经 Processor 转交，避免持并发许可的任务阻塞在有界调度队列上。
+            await self.crawler.engine.requeue_request(response)
             return None
         return response
 

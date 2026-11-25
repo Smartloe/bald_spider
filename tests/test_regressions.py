@@ -136,6 +136,9 @@ class _FakeEngine:
     async def enqueue_request(self, request):
         self.enqueued.append(request)
 
+    async def requeue_request(self, request):
+        self.enqueued.append(request)
+
 
 class _FakeCrawler:
     def __init__(self):
@@ -997,3 +1000,88 @@ def test_aiohttp_downloader_rejects_unsupported_method():
 
     with pytest.raises(RequestMethodError):
         asyncio.run(downloader.send_request(None, request))
+
+
+class _Always500Downloader(DownloaderBase):
+    async def download(self, request):
+        return _response(request, status_code=500)
+
+
+class _RetryBoundedSpider(Spider):
+    start_urls = ["http://example.invalid/1", "http://example.invalid/2"]
+
+    async def parse(self, response):
+        for index in range(2):
+            yield Request(f"{response.url}/{index}", callback=self.parse_detail)
+
+    def parse_detail(self, response):
+        pass
+
+
+def test_bounded_scheduler_with_retry_requeue_does_not_deadlock():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _Always500Downloader,
+            "MIDDLEWARES": [Retry],
+            "RETRY_HTTP_CODES": [500],
+            "IGNORE_HTTP_CODES": [],
+            "MAX_RETRY_TIMES": 1,
+            "RETRY_EXCEPTIONS": [],
+            "SCHEDULER_QUEUE_SIZE": 1,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_RetryBoundedSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=15))
+
+    assert crawler.stats.get_value("request_scheduler_count") == 12
+    assert crawler.stats.get_value("response_received_count") == 12
+
+
+def test_unhandled_ignore_request_is_not_an_exception():
+    manager = MiddlewareManager(_FakeCrawler())
+    request = Request("http://example.com")
+
+    async def process_request(request):
+        raise IgnoreRequest("ignore")
+
+    manager._process_request = process_request
+
+    assert asyncio.run(manager.download(request)) is None
+
+
+class _FailingCloseDownloader(DownloaderBase):
+    async def download(self, request):
+        return _response(request)
+
+    async def close(self):
+        raise RuntimeError("close-fail")
+
+
+def test_downloader_close_failure_still_emits_spider_closed():
+    _SlowSpider.closed_called = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _FailingCloseDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_SlowSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert _SlowSpider.closed_called is True
+    assert crawler.stats.get_value("reason") == "finished"
+
+
+def test_zero_concurrency_is_clamped():
+    assert TaskManager(total_concurrency=0).semaphore._value == 1
