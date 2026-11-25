@@ -1,7 +1,6 @@
 from bald_spider.core.downloader import DownloaderBase
 from bald_spider.core.processor import Processor
 from bald_spider.core.scheduler import Scheduler
-from collections.abc import Generator
 from typing import Callable
 import asyncio
 from bald_spider.event import spider_closed, spider_error, spider_opened
@@ -31,14 +30,16 @@ class Engine:
         self.crawler = crawler
         self.settings = crawler.settings
         self.downloader: DownloaderBase | None = None
-        self.start_requests: Generator | None = None
-        self.spider: Scheduler | None = None
+        self.start_requests = None
+        self.spider = None
         self.scheduler: Scheduler | None = None
         self.processor: Processor | None = None
         self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
         self.interval_log_task: asyncio.Task | None = None
         self.start_requests_task: asyncio.Task | None = None
         self.exit_monitor_task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
+        self._closed = False
         self.running = False
         self.normal = True
 
@@ -54,22 +55,28 @@ class Engine:
         self.running = True
         self.logger.info(f"info bald_spider started.(project_name:{self.settings.get('PROJECT_NAME')})")
         self.spider = spider
-        self.scheduler = Scheduler(self.crawler)
-        if hasattr(self.scheduler, "open"):
-            self.scheduler.open()
-        downloader_cls = self._get_downloader_cls()
-        self.downloader = downloader_cls.create_instance(self.crawler)
-        if hasattr(self.downloader, "open"):
-            self.downloader.open()
-        self.processor = Processor(self.crawler)
-        self.start_requests = iter(spider.start_requests())
-        await self._open_spider()
+        try:
+            self.scheduler = Scheduler(self.crawler)
+            if hasattr(self.scheduler, "open"):
+                self.scheduler.open()
+            downloader_cls = self._get_downloader_cls()
+            self.downloader = downloader_cls.create_instance(self.crawler)
+            if hasattr(self.downloader, "open"):
+                self.downloader.open()
+            self.processor = Processor(self.crawler)
+            self.start_requests = spider.start_requests()
+            await self._open_spider()
+        except BaseException:
+            # 启动阶段失败（含取消）时兜底释放已创建资源，避免会话泄漏。
+            if not self._closed:
+                await self._close_resources()
+            raise
 
     async def _open_spider(self):
         # 先等待 spider_opened 等钩子完成，保证 spider 级配置（如 headers）在首个请求前生效。
         await self.crawler.subscriber.notify(spider_opened)
         # 启动处理器的后台处理任务
-        asyncio.create_task(self.processor.process())
+        self.processor.start()
         self.interval_log_task = asyncio.create_task(
             self.scheduler.interval_log(self.settings.getint("INTERVAL"))
         )
@@ -93,17 +100,26 @@ class Engine:
                     )
 
     async def _enqueue_start_requests(self):
-        """后台任务：把 start_requests 产出的请求逐个入队，不再依赖轮询。"""
+        """后台任务：把 start_requests 产出的请求逐个入队，兼容同步/异步生成器。"""
         try:
             count = 0
-            for request in self.start_requests:
-                if not self.running:
-                    break
-                await self.enqueue_request(request)
-                count += 1
-                if count % 100 == 0:
-                    # 用户可能返回无限生成器；定期让出事件循环，保证取消/停机可生效。
-                    await asyncio.sleep(0)
+            if hasattr(self.start_requests, "__aiter__"):
+                async for request in self.start_requests:
+                    if not self.running:
+                        break
+                    await self.enqueue_request(request)
+                    count += 1
+                    if count % 100 == 0:
+                        await asyncio.sleep(0)
+            else:
+                for request in self.start_requests:
+                    if not self.running:
+                        break
+                    await self.enqueue_request(request)
+                    count += 1
+                    if count % 100 == 0:
+                        # 用户可能返回无限生成器；定期让出事件循环，保证取消/停机可生效。
+                        await asyncio.sleep(0)
         except Exception as exc:
             self.logger.error(f"Error during start_requests: {exc}", exc_info=True)
             await self.crawler.subscriber.notify(spider_error, exc, self.spider)
@@ -114,11 +130,13 @@ class Engine:
         """所有工作完成后（或被外部停机）唤醒主循环。使用普通 sleep 轮询，避免 wait_for 的取消问题。"""
         while True:
             if not self.running:
-                # 外部停机（如 Ctrl+C）：主循环可能仍阻塞在取队列上，投递哨兵唤醒。
+                # 外部停机（如 Ctrl+C）：主循环可能仍阻塞在取队列/信号量上，先解除等待再唤醒。
+                self._stop_event.set()
                 await self.scheduler.put_request(_CLOSE_SENTINEL)
                 return
             if self.start_requests is None and await self._exit():
                 self.running = False
+                self._stop_event.set()
                 await self.scheduler.put_request(_CLOSE_SENTINEL)
                 return
             await asyncio.sleep(0.1)
@@ -138,6 +156,7 @@ class Engine:
             cancelled = True
         finally:
             self.running = False
+            self._stop_event.set()
             await self.close_spider(cancel_tasks=cancelled or not self.normal)
         if cancelled:
             raise asyncio.CancelledError
@@ -157,9 +176,41 @@ class Engine:
                     exc_info=(type(exc), exc, exc.__traceback__),
                 )
 
-        # asyncio.create_task(crawl_task())
-        await self.task_manager.semaphore.acquire()
+        if not await self._acquire_semaphore():
+            return
         self.task_manager.create_task(crawl_task())
+
+    async def _acquire_semaphore(self):
+        """可中断地获取并发信号量：停机事件触发时立即返回 False。"""
+        if self._stop_event.is_set() or not self.running:
+            return False
+        # 快路径：有空闲名额时同步获取，不让出事件循环，避免“请求已出队但尚未登记”被误判为空闲。
+        if not self.task_manager.semaphore.locked():
+            await self.task_manager.semaphore.acquire()
+            return True
+        acquire = asyncio.create_task(self.task_manager.semaphore.acquire())
+        stop = asyncio.create_task(self._stop_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {acquire, stop}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            acquire.cancel()
+            stop.cancel()
+            raise
+        finally:
+            for task in (acquire, stop):
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+        if self._stop_event.is_set() or not self.running:
+            if acquire.done() and not acquire.cancelled() and acquire.exception() is None:
+                self.task_manager.semaphore.release()
+            return False
+        return acquire.done() and acquire.exception() is None
 
     async def _fetch(self, request):
         async def _success(_response):
@@ -193,7 +244,7 @@ class Engine:
             if isinstance(spider_output, (Request, Item)):
                 await self.processor.enqueue(spider_output)
             elif isinstance(spider_output, Exception):
-                asyncio.create_task(self.crawler.subscriber.notify(spider_error, spider_output, self.spider))
+                await self.crawler.subscriber.notify(spider_error, spider_output, self.spider)
                 raise spider_output
             else:
                 raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
@@ -207,13 +258,25 @@ class Engine:
             return True
         return False
 
-    async def close_spider(self, cancel_tasks=False):
+    async def _close_resources(self):
+        """释放下载器与后台任务；可重复调用，用于正常关闭与启动失败兜底。"""
+        if self._closed:
+            return
+        self._closed = True
         if self.interval_log_task is not None and not self.interval_log_task.done():
             self.interval_log_task.cancel()
             try:
                 await self.interval_log_task
             except asyncio.CancelledError:
                 pass
+        if self.processor is not None:
+            await self.processor.close()
+        if self.downloader is not None:
+            await self.downloader.close()
+
+    async def close_spider(self, cancel_tasks=False):
+        if self._closed:
+            return
         tasks = list(self.task_manager.current_task)
         if cancel_tasks:
             # 取消场景下，在途任务可能仍在无限产出，必须先取消，否则关闭会永久挂起。
@@ -226,9 +289,10 @@ class Engine:
                     f"task raised unhandled exception during shutdown: {result.__class__.__name__}: {result}",
                     exc_info=(type(result), result, result.__traceback__),
                 )
-        await self.downloader.close()
+        await self._close_resources()
         if self.normal:
             await self.crawler.close()
         else:
-            # ctrl+c 等非正常关闭：统计已由信号处理器记录，这里补发关闭事件。
+            # ctrl+c 等非正常关闭：补发关闭事件并写入统计（close_spider 已做幂等保护）。
             await self.crawler.subscriber.notify(spider_closed)
+            self.crawler.stats.close_spider(self.spider, "shutdown")

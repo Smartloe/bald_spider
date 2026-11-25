@@ -78,42 +78,47 @@ class RequestError(SpiderError):
 
 ```
 tests/
-├── unit/           # 单元测试
-├── integration/    # 集成测试
-├── fixtures/       # 测试数据
-└── examples/       # 示例代码测试
+├── test_main.py            # 基础框架测试
+├── test_regressions.py     # 回归测试（下载器/中间件/生命周期/取消）
+├── baidu_spider/           # 示例爬虫项目
+└── misc/                   # 独立的小脚本示例
 ```
 
 ### 编写测试
 
+项目未引入 `pytest-asyncio`，异步场景统一用 `asyncio.run` 在同步测试中驱动：
+
 ```python
-import pytest
 import asyncio
-from bald_spider.core.engine import Engine
+
+from bald_spider.crawler import Crawler
+from bald_spider.core.downloader import DownloaderBase
+from bald_spider.http.response import Response
+from bald_spider.settings.settings_manager import SettingsManager
 from bald_spider.spider import Spider
-from bald_spider.http.request import Request
 
 
-class TestEngine:
-    @pytest.mark.asyncio
-    async def test_engine_start_stop(self):
-        """测试引擎启动和停止"""
-        engine = Engine()
-        spider = Spider()
-        
-        # 测试启动
-        await engine.start_spider(spider)
-        assert engine.running is True
-        
-        # 测试停止
-        await engine.stop()
-        assert engine.running is False
+class FakeDownloader(DownloaderBase):
+    async def download(self, request):
+        return Response(
+            request.url, request=request, headers={}, body=b"ok", status_code=200
+        )
 
-    @pytest.mark.asyncio
-    async def test_request_processing(self):
-        """测试请求处理"""
-        # 测试代码
-        pass
+
+class DemoSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+
+    async def parse(self, response):
+        assert response.text == "ok"
+
+
+def test_demo_spider_runs():
+    settings = SettingsManager(
+        {"DOWNLOADER": FakeDownloader, "LOG_LEVEL": "CRITICAL", "STATS_DUMP": False}
+    )
+    crawler = Crawler(DemoSpider, settings)
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+    assert crawler.stats.get_value("response_received_count") == 1
 ```
 
 ### 运行测试
@@ -123,13 +128,10 @@ class TestEngine:
 uv run pytest
 
 # 运行特定测试文件
-uv run pytest tests/test_engine.py
+uv run pytest tests/test_regressions.py
 
-# 运行带覆盖率的测试
-uv run pytest --cov=bald_spider
-
-# 运行性能测试
-uv run pytest tests/performance/ -v
+# 显示详细输出
+uv run pytest -v
 ```
 
 ## 🔧 调试技巧
@@ -186,58 +188,75 @@ async def profile_crawl():
 ### 自定义中间件
 
 ```python
-class CustomMiddleware:
-    async def process_request(self, request: Request, spider: Spider) -> Optional[Request]:
-        """处理请求"""
-        # 添加自定义逻辑
-        request.headers['User-Agent'] = 'CustomBot/1.0'
-        return request
-    
-    async def process_response(self, request: Request, response: str, spider: Spider) -> str:
-        """处理响应"""
-        # 添加自定义逻辑
+from bald_spider.middleware import BaseMiddleware
+
+
+class CustomMiddleware(BaseMiddleware):
+    def process_request(self, request, spider):
+        """修改请求后返回 None；返回 Request 会被视为短路并重新入队。"""
+        request.headers["User-Agent"] = "CustomBot/1.0"
+        return None
+
+    async def process_response(self, request, response, spider):
+        """返回 Response 继续后续处理，返回 Request 则重新入队。"""
         return response
-    
-    async def process_exception(self, request: Request, exception: Exception, spider: Spider):
-        """处理异常"""
-        # 添加自定义逻辑
-        logger.error(f"Exception in {request.url}: {exception}")
+
+    async def process_exception(self, request, exception, spider):
+        """返回 Request/Response 表示已处理，返回 None 交给后续中间件。"""
         return None
 ```
 
 ### 自定义调度器
 
 ```python
+from bald_spider.core.scheduler import Scheduler
+
+
 class CustomScheduler(Scheduler):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, crawler):
+        super().__init__(crawler)
         self.custom_queue = []
-    
-    async def enqueue_request(self, request: Request):
-        """自定义请求入队逻辑"""
-        # 添加自定义逻辑
+
+    async def enqueue_request(self, request):
+        self.custom_queue.append(request)
         await super().enqueue_request(request)
-    
-    async def next_request(self) -> Optional[Request]:
-        """自定义请求出队逻辑"""
-        # 添加自定义逻辑
+
+    async def next_request(self):
         return await super().next_request()
 ```
 
 ### 自定义下载器
 
 ```python
-class CustomDownloader(Downloader):
-    async def download(self, request: Request) -> str:
-        """自定义下载逻辑"""
-        # 使用真实的 HTTP 客户端
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                request.url,
-                headers=request.headers,
-                timeout=30
-            )
-            return response.text
+import httpx
+
+from bald_spider import Response
+from bald_spider.core.downloader import DownloaderBase
+
+
+class CustomDownloader(DownloaderBase):
+    def __init__(self, crawler):
+        super().__init__(crawler)
+        self._client = httpx.AsyncClient(follow_redirects=True)
+
+    async def download(self, request) -> Response | None:
+        raw = await self._client.request(
+            method=request.method,
+            url=request.url,
+            headers=request.headers,
+            data=request.body,
+        )
+        body = await raw.aread()
+        return Response(
+            url=str(raw.url),
+            request=request,
+            headers=dict(raw.headers),
+            body=body,
+            status_code=raw.status_code,
+        )
+
+    async def close(self):
+        await self._client.aclose()
 ```
 
 ## 📋 代码审查清单

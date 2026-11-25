@@ -26,6 +26,9 @@ class StatsCollector:
         self._stats.clear()
 
     def close_spider(self, spider, reason):
+        # 幂等：Ctrl+C 等路径可能先写入统计，后续关闭不应重复覆盖。
+        if "end_time" in self._stats:
+            return
         self._stats["end_time"] = now()
         self._stats["reason"] = reason
         self._stats["use_time"] = date_delta(self._stats["start_time"], self._stats["end_time"])

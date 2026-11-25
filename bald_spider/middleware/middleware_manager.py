@@ -1,4 +1,3 @@
-from asyncio import create_task
 from types import MethodType
 from typing import Callable
 from bald_spider.exceptions import (
@@ -49,7 +48,7 @@ class MiddlewareManager:
             try:
                 response = await common_call(method, request, response, self.crawler.spider)
             except IgnoreRequest as exc:
-                create_task(self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider))
+                await self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider)
                 return None
             else:
                 if isinstance(response, Request):
@@ -82,13 +81,13 @@ class MiddlewareManager:
         except KeyError:
             raise RequestMethodError(f"{request.method.lower()} is not supported.")
         except IgnoreRequest as exc:
-            create_task(self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider))
+            await self.crawler.subscriber.notify(ignore_request, exc, request, self.crawler.spider)
             response = await self._process_exception(request, exc)
         except Exception as exc:
             self._stats.inc_value(f"download_error/{exc.__class__.__name__}")
             response = await self._process_exception(request, exc)
         else:
-            create_task(self.crawler.subscriber.notify(response_received, response, self.crawler.spider))
+            await self.crawler.subscriber.notify(response_received, response, self.crawler.spider)
             self.crawler.stats.inc_value("response_received_count")
         if isinstance(response, Response):
             response = await self._process_response(request, response)

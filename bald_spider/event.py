@@ -6,7 +6,7 @@ spider_error = "spider_error"
 spider_opened = "spider_opened"
 # spider_closed arguments: None
 spider_closed = "spider_closed"
-# ignore_request arguments: request, spider, exception
+# ignore_request arguments: exception, request, spider
 ignore_request = "ignore_request"
 # request_scheduled arguments: request, spider
 request_scheduled = "request_scheduled"

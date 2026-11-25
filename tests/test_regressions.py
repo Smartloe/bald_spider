@@ -14,7 +14,9 @@ from bald_spider import Request, Response
 from bald_spider.core.downloader import ActiveRequestManger, DownloaderBase
 from bald_spider.core.downloader.aiohttp_downloder import AioDownloader
 from bald_spider.core.downloader.httpx_downloader import HTTPXDownloader
+from bald_spider.core.processor import Processor
 from bald_spider.crawler import Crawler
+from bald_spider.event import item_successful
 from bald_spider.exceptions import IgnoreRequest
 from bald_spider.items import Field
 from bald_spider.items.items import Item
@@ -25,6 +27,7 @@ from bald_spider.middleware.response_filter import ResponseFilter
 from bald_spider.middleware.retry import Retry
 from bald_spider.settings.settings_manager import SettingsManager
 from bald_spider.spider import Spider
+from bald_spider.stats_collector import StatsCollector
 from bald_spider.subscriber import Subscriber
 from bald_spider.task_manager import TaskManager
 from bald_spider.utils.pqueue import SpoderPriorityQueue
@@ -507,3 +510,184 @@ def test_endless_start_requests_can_be_stopped():
         await asyncio.wait_for(task, timeout=3)
 
     asyncio.run(scenario())
+
+
+class _AsyncStartSpider(Spider):
+    start_urls = []
+
+    async def start_requests(self):
+        yield Request("http://example.invalid/")
+
+    async def parse(self, response):
+        return None
+
+
+def test_async_generator_start_requests_is_supported():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_AsyncStartSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("response_received_count") == 1
+
+
+class _TwoSlowSpider(Spider):
+    start_urls = ["http://example.invalid/1", "http://example.invalid/2"]
+
+    async def parse(self, response):
+        return None
+
+
+class _VerySlowDownloader(DownloaderBase):
+    closed = False
+
+    async def download(self, request):
+        await asyncio.sleep(10)
+        return _response(request)
+
+    async def close(self):
+        type(self).closed = True
+
+
+def test_stop_interrupts_semaphore_wait():
+    _VerySlowDownloader.closed = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _VerySlowDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_TwoSlowSpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        # 第一个请求占满信号量，第二个请求阻塞在可中断的信号量等待上
+        await asyncio.sleep(0.4)
+        crawler.engine.running = False
+        crawler.engine.normal = False
+        await asyncio.wait_for(task, timeout=3)
+
+    asyncio.run(scenario())
+
+    assert _VerySlowDownloader.closed is True
+
+
+class _BrokenStartSpider(Spider):
+    def start_requests(self):
+        raise RuntimeError("boom-start")
+
+
+def test_startup_failure_closes_downloader():
+    _TrackingDownloader.closed = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _TrackingDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+        }
+    )
+    crawler = Crawler(_BrokenStartSpider, settings)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(crawler.crawl())
+
+    assert _TrackingDownloader.closed is True
+
+
+def test_processor_emits_item_successful_event():
+    called = []
+
+    async def receiver(item, spider):
+        called.append(item)
+
+    subscriber = Subscriber()
+    subscriber.subscriber(receiver, event=item_successful)
+    crawler = SimpleNamespace(
+        stats=SimpleNamespace(inc_value=lambda *args, **kwargs: None),
+        spider="spider",
+        subscriber=subscriber,
+        engine=None,
+    )
+    processor = Processor(crawler)
+    item = _ChildItem()
+    item["url"] = "http://example.com"
+    item["title"] = "title"
+
+    asyncio.run(processor._process_item(item))
+
+    assert called == [item]
+
+
+def test_stats_close_spider_is_idempotent():
+    crawler = SimpleNamespace(settings=SettingsManager({"STATS_DUMP": False}))
+    stats = StatsCollector(crawler)
+    stats["start_time"] = "2024-01-01 00:00:00"
+
+    stats.close_spider(None, "first")
+    stats.close_spider(None, "second")
+
+    assert stats["reason"] == "first"
+
+
+def test_item_hasattr_does_not_raise():
+    item = _ChildItem()
+
+    assert hasattr(item, "url") is False
+    with pytest.raises(AttributeError):
+        item.url
+
+
+class _DownloaderCrawler:
+    def __init__(self):
+        self.settings = SettingsManager(
+            {"USE_SESSION": True, "VERIFY_SSL": False, "LOG_LEVEL": "CRITICAL"}
+        )
+        self.stats = SimpleNamespace(inc_value=lambda *args, **kwargs: None)
+        self.subscriber = Subscriber()
+        self.spider = None
+        self.engine = SimpleNamespace(downloader=None)
+
+
+def test_httpx_downloader_reuses_and_closes_client():
+    crawler = _DownloaderCrawler()
+    downloader = HTTPXDownloader(crawler)
+    crawler.engine.downloader = downloader
+
+    downloader.open()
+    client = downloader._client
+    assert client is not None
+    assert client.is_closed is False
+
+    asyncio.run(downloader.close())
+
+    assert downloader._client is None
+    assert client.is_closed is True
+
+
+def test_retry_covers_httpx_timeout_exceptions():
+    stats = SimpleNamespace(inc_value=lambda *args, **kwargs: None)
+    retry = Retry(
+        retry_http_codes=[],
+        ignore_http_codes=[],
+        max_retry_times=1,
+        retry_exceptions=[],
+        stats=stats,
+    )
+
+    for exception in (httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
+        assert exception in retry.retry_exceptions

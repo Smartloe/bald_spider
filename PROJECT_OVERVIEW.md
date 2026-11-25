@@ -90,19 +90,25 @@ Bald Spider 致力于成为最现代化、最易用的 Python 异步网络爬虫
 
 ### 性能测试
 ```python
-# 简单性能测试
+import asyncio
+import time
+
+from bald_spider.crawler import Crawler
+from bald_spider.settings.settings_manager import SettingsManager
+
+
 async def performance_test():
+    settings = SettingsManager({"LOG_LEVEL": "CRITICAL"})
+    crawler = Crawler(TestSpider, settings)  # TestSpider 需自行定义
+
     start_time = time.time()
-    
-    # 创建测试爬虫
-    spider = TestSpider()
-    engine = Engine()
-    
-    # 运行爬虫
-    await engine.start_spider(spider)
-    
+    await crawler.crawl()
+
     duration = time.time() - start_time
     print(f"爬取完成，耗时: {duration:.2f}秒")
+
+
+asyncio.run(performance_test())
 ```
 
 ## 🔧 技术决策记录

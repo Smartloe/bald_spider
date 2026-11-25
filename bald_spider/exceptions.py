@@ -14,7 +14,7 @@ class ItemInError(Exception):
     pass
 
 
-class ItemAttribuError(Exception):
+class ItemAttribuError(AttributeError):
     pass
 
 
