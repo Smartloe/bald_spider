@@ -11,7 +11,9 @@ class Processor:
         # 处理器队列不设上限：产出侧已由 CONCURRENCY 限制；对处理器队列做阻塞限制
         # 会在“scheduler 满 + 主循环等待并发许可”时形成等待环。
         self.queue: Queue = Queue()
-        self.logger = get_logger(self.__class__.__name__)
+        settings = getattr(crawler, "settings", None)
+        log_level = settings.get("LOG_LEVEL") if settings is not None else None
+        self.logger = get_logger(self.__class__.__name__, log_level)
         self._processing = False
         self._task: asyncio.Task | None = None
         self._closed = False

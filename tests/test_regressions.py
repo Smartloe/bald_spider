@@ -15,8 +15,9 @@ from bald_spider import Request, Response
 from bald_spider.core.downloader import ActiveRequestManger, DownloaderBase
 from bald_spider.core.downloader.aiohttp_downloder import AioDownloader
 from bald_spider.core.downloader.httpx_downloader import HTTPXDownloader
+from bald_spider.core.engine import Engine
 from bald_spider.core.processor import Processor
-from bald_spider.crawler import Crawler
+from bald_spider.crawler import Crawler, CrawlerProcess
 from bald_spider.event import item_successful, response_received
 from bald_spider.exceptions import DecodeError, IgnoreRequest, InvalidOutputError, RequestMethodError
 from bald_spider.items import Field
@@ -1085,3 +1086,166 @@ def test_downloader_close_failure_still_emits_spider_closed():
 
 def test_zero_concurrency_is_clamped():
     assert TaskManager(total_concurrency=0).semaphore._value == 1
+
+
+class _NoIdleDownloader:
+    @classmethod
+    def create_instance(cls, *args, **kwargs):
+        return cls()
+
+    async def fetch(self, request):
+        pass
+
+    async def download(self, request):
+        pass
+
+    async def close(self):
+        pass
+
+
+def test_downloader_requires_idle_method():
+    assert issubclass(_NoIdleDownloader, DownloaderBase) is False
+
+
+class _EmptySpider(Spider):
+    start_urls = []
+    closed_called = False
+
+    async def parse(self, response):
+        return None
+
+    async def spider_closed(self):
+        type(self).closed_called = True
+
+
+class _SlowCloseDownloader(DownloaderBase):
+    closed = False
+
+    async def download(self, request):
+        return _response(request)
+
+    async def close(self):
+        await asyncio.sleep(0.5)
+        type(self).closed = True
+
+
+def test_empty_start_urls_finishes_cleanly():
+    _EmptySpider.closed_called = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _TrackingDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_EmptySpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert _EmptySpider.closed_called is True
+    assert crawler.stats.get_value("response_received_count") is None
+
+
+def test_cancellation_during_close_propagates_and_cleans_up():
+    _SlowCloseDownloader.closed = False
+    _EmptySpider.closed_called = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _SlowCloseDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_EmptySpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        await asyncio.sleep(0.3)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(scenario())
+
+    assert _SlowCloseDownloader.closed is True
+    assert _EmptySpider.closed_called is True
+
+
+class _EightUrlSpider(Spider):
+    start_urls = [f"http://example.invalid/{index}" for index in range(8)]
+
+    async def parse(self, response):
+        return None
+
+
+def test_concurrency_8_processes_all_requests():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 8,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_EightUrlSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("response_received_count") == 8
+
+
+class _ThreeItemSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+
+    async def parse(self, response):
+        for index in range(3):
+            item = _ChildItem()
+            item["url"] = f"{response.url}/{index}"
+            item["title"] = "title"
+            yield item
+
+
+def test_items_are_counted():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_ThreeItemSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("item_successful_count") == 3
+
+
+def test_crawler_process_restores_sigint_handler():
+    import signal
+
+    process = CrawlerProcess(SettingsManager({"LOG_LEVEL": "CRITICAL"}))
+    before = signal.getsignal(signal.SIGINT)
+
+    asyncio.run(process.start())
+
+    assert signal.getsignal(signal.SIGINT) is before
+
+
+def test_engine_logger_uses_configured_log_level():
+    crawler = _FakeCrawler()
+    crawler.settings = SettingsManager({"MIDDLEWARES": [], "LOG_LEVEL": "CRITICAL"})
+
+    engine = Engine(crawler)
+
+    assert engine.logger.level == logging.CRITICAL

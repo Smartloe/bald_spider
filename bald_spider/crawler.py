@@ -33,7 +33,7 @@ class Crawler:
         await self.engine.start_spider(self.spider)
 
     def _create_subscriber(self):
-        return Subscriber()
+        return Subscriber(self.settings.get("LOG_LEVEL"))
 
     def _create_engine(self):
         engine = Engine(self)
@@ -65,11 +65,30 @@ class CrawlerProcess:
         self.crawlers: Final[Set] = set()
         self._active: Final[Set] = set()
         self.settings = settings if settings is not None else SettingsManager()
+        self._previous_sigint = None
+        self._signal_installed = False
+
+    def _install_signal_handler(self):
+        if self._signal_installed:
+            return
         try:
+            self._previous_sigint = signal.getsignal(signal.SIGINT)
             signal.signal(signal.SIGINT, self._shutdown)
+            self._signal_installed = True
         except ValueError:
             # 非主线程无法注册信号处理器，退化为默认行为。
             logger.warning("SIGINT handler not installed (not running in main thread).")
+
+    def _restore_signal_handler(self):
+        if not self._signal_installed:
+            return
+        try:
+            signal.signal(signal.SIGINT, self._previous_sigint)
+        except ValueError:
+            pass
+        finally:
+            self._signal_installed = False
+            self._previous_sigint = None
 
     async def crawl(self, spider: Type[Spider]):
         crawler: Crawler = self._create_crawler(spider)
@@ -82,7 +101,11 @@ class CrawlerProcess:
         return asyncio.create_task(crawler.crawl())
 
     async def start(self):
-        await asyncio.gather(*self._active)
+        self._install_signal_handler()
+        try:
+            await asyncio.gather(*self._active)
+        finally:
+            self._restore_signal_handler()
 
     def _create_crawler(self, spider_cls) -> Crawler:
         if isinstance(spider_cls, str):

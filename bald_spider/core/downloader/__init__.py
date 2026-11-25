@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod, ABCMeta
 class DwonloaderMeta(ABCMeta):
 
     def __subclasscheck__(self, subclass) -> bool:
-        requied_methods = ("download", "fetch", "create_instance", "close")
+        requied_methods = ("download", "fetch", "create_instance", "close", "idle")
         is_subclass = all(
             hasattr(subclass, method) and callable(getattr(subclass, method, None)) for method in requied_methods
         )

@@ -26,21 +26,24 @@ _CLOSE_SENTINEL = _CloseRequest()
 
 class Engine:
     def __init__(self, crawler):
-        self.logger = get_logger(self.__class__.__name__)
         self.crawler = crawler
         self.settings = crawler.settings
+        self.logger = get_logger(self.__class__.__name__, self.settings.get("LOG_LEVEL"))
         self.downloader: DownloaderBase | None = None
         self.start_requests = None
         self.spider = None
         self.scheduler: Scheduler | None = None
         self.processor: Processor | None = None
-        self.task_manager: TaskManager = TaskManager(self.settings.getint("CONCURRENCY"))
+        self.task_manager: TaskManager = TaskManager(
+            self.settings.getint("CONCURRENCY"), self.settings.get("LOG_LEVEL")
+        )
         self.interval_log_task: asyncio.Task | None = None
         self.start_requests_task: asyncio.Task | None = None
         self.exit_monitor_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._closed = False
         self._dispatching = 0
+        self._cancelled_during_close = False
         self.running = False
         self.normal = True
 
@@ -173,16 +176,19 @@ class Engine:
             self.running = False
             self._stop_event.set()
             await self._run_close(cancel_tasks=cancelled or not self.normal)
+            if self._cancelled_during_close:
+                cancelled = True
         if cancelled:
             raise asyncio.CancelledError
 
     async def _run_close(self, cancel_tasks):
-        """执行关闭流程；二次取消时继续等待清理完成，避免下载器/事件未收尾。"""
+        """执行关闭流程；关闭期间的取消要等待清理完成，并向上传播 CancelledError。"""
         close_task = asyncio.create_task(self.close_spider(cancel_tasks=cancel_tasks))
         while not close_task.done():
             try:
                 await asyncio.shield(close_task)
             except asyncio.CancelledError:
+                self._cancelled_during_close = True
                 continue
         return close_task.result()
 

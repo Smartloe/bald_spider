@@ -6,9 +6,9 @@ from bald_spider.utils.log import get_logger
 
 
 class Subscriber:
-    def __init__(self):
+    def __init__(self, log_level=None):
         self._subscriber: dict[str, set[Callable[..., Coroutine[Any, Any, Any]]]] = defaultdict(set)
-        self.logger = get_logger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__, log_level)
 
     def subscriber(self, receiver: Callable[..., Coroutine[Any, Any, Any]], *, event: str) -> None:
         self._subscriber[event].add(receiver)
