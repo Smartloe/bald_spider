@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -691,3 +692,38 @@ def test_retry_covers_httpx_timeout_exceptions():
 
     for exception in (httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
         assert exception in retry.retry_exceptions
+
+
+class _TwoUrlSpider(Spider):
+    start_urls = ["http://example.invalid/1", "http://example.invalid/2"]
+
+    async def parse(self, response):
+        # 模拟同步解析耗时：制造“监视器 tick 与信号量释放对齐”的窗口
+        deadline = time.monotonic() + 0.08
+        while time.monotonic() < deadline:
+            pass
+
+
+class _ShortSleepDownloader(DownloaderBase):
+    async def download(self, request):
+        await asyncio.sleep(0.05)
+        return _response(request)
+
+
+def test_saturated_semaphore_does_not_drop_requests():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _ShortSleepDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_TwoUrlSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("response_received_count") == 2
+    assert crawler.stats.get_value("request_scheduler_count") == 2

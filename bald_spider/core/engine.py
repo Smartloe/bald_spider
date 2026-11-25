@@ -40,6 +40,7 @@ class Engine:
         self.exit_monitor_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._closed = False
+        self._dispatching = 0
         self.running = False
         self.normal = True
 
@@ -70,6 +71,12 @@ class Engine:
             # 启动阶段失败（含取消）时兜底释放已创建资源，避免会话泄漏。
             if not self._closed:
                 await self._close_resources()
+                try:
+                    await self.crawler.subscriber.notify(spider_closed)
+                    if self.crawler.stats is not None:
+                        self.crawler.stats.close_spider(self.spider, "startup failed")
+                except Exception:
+                    self.logger.exception("error while cleaning up after startup failure")
             raise
 
     async def _open_spider(self):
@@ -150,7 +157,12 @@ class Engine:
                 if request is _CLOSE_SENTINEL:
                     self.running = False
                     break
-                await self._crawl(request)
+                # 请求已出队但尚未登记为任务：计入在途，避免被空闲监视器误判并丢弃。
+                self._dispatching += 1
+                try:
+                    await self._crawl(request)
+                finally:
+                    self._dispatching -= 1
         except asyncio.CancelledError:
             # 取消时仍要完成资源清理与关闭事件，随后再向上传播。
             cancelled = True
@@ -195,8 +207,12 @@ class Engine:
                 {acquire, stop}, return_when=asyncio.FIRST_COMPLETED
             )
         except asyncio.CancelledError:
-            acquire.cancel()
-            stop.cancel()
+            for task in (acquire, stop):
+                if not task.done():
+                    task.cancel()
+            # 已拿到许可但随后被取消时归还，避免关闭期信号量泄漏。
+            if acquire.done() and not acquire.cancelled() and acquire.exception() is None:
+                self.task_manager.semaphore.release()
             raise
         finally:
             for task in (acquire, stop):
@@ -254,7 +270,13 @@ class Engine:
                 await asyncio.sleep(0)
 
     async def _exit(self):
-        if self.scheduler.idle() and self.downloader.idle() and self.task_manager.all_done() and self.processor.idle():
+        if (
+            self._dispatching == 0
+            and self.scheduler.idle()
+            and self.downloader.idle()
+            and self.task_manager.all_done()
+            and self.processor.idle()
+        ):
             return True
         return False
 
