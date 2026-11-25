@@ -7,7 +7,7 @@ from bald_spider.event import spider_error, spider_opened
 from bald_spider.exceptions import OutputError
 from bald_spider.http.request import Request
 from bald_spider.items.items import Item
-from inspect import iscoroutine
+from inspect import isasyncgen, iscoroutine, isgenerator
 from bald_spider.utils.spider import transform
 from bald_spider.task_manager import TaskManager
 from bald_spider.utils.log import get_logger
@@ -63,6 +63,7 @@ class Engine:
         if getattr(self.crawler, "_shutdown_requested", False):
             self.running = False
             self.normal = False
+            self.close_reason = getattr(self.crawler, "_shutdown_reason", "ctrl + c")
         self.logger.info(f"info bald_spider started.(project_name:{self.settings.get('PROJECT_NAME')})")
         self.spider = spider
         try:
@@ -76,11 +77,13 @@ class Engine:
             self.processor = Processor(self.crawler)
             self.start_requests = spider.start_requests()
             await self._open_spider()
-        except BaseException:
+        except BaseException as exc:
             # 启动阶段失败（含取消）时兜底关闭：复用关闭流程，保证资源释放、
             # spider_closed 与统计收尾，并屏蔽清理期间的再次取消。
             if not self._closed:
-                if self.close_reason == "finished":
+                if isinstance(exc, asyncio.CancelledError):
+                    self.close_reason = "cancelled"
+                elif self.close_reason == "finished":
                     self.close_reason = "startup failed"
                 await self._run_close(cancel_tasks=True)
             raise
@@ -115,11 +118,14 @@ class Engine:
                     )
 
     async def _enqueue_start_requests(self):
-        """后台任务：把 start_requests 产出的请求逐个入队，兼容同步/异步生成器。"""
+        """后台任务：把 start_requests 产出的请求逐个入队，兼容生成器与协程。"""
         try:
+            source = self.start_requests
+            if iscoroutine(source):
+                source = await source
             count = 0
-            if hasattr(self.start_requests, "__aiter__"):
-                async for request in self.start_requests:
+            if hasattr(source, "__aiter__"):
+                async for request in source:
                     if not self.running:
                         break
                     await self.enqueue_request(request)
@@ -127,7 +133,7 @@ class Engine:
                     if count % 100 == 0:
                         await asyncio.sleep(0)
             else:
-                for request in self.start_requests:
+                for request in source:
                     if not self.running:
                         break
                     await self.enqueue_request(request)
@@ -136,18 +142,20 @@ class Engine:
                         # 用户可能返回无限生成器；定期让出事件循环，保证取消/停机可生效。
                         await asyncio.sleep(0)
         except Exception as exc:
-            self.close_reason = "start_requests error"
+            if self.close_reason == "finished":
+                self.close_reason = "start_requests error"
             self.logger.error(f"Error during start_requests: {exc}", exc_info=True)
             await self.crawler.subscriber.notify(spider_error, exc, self.spider)
         finally:
-            generator = self.start_requests
+            source = self.start_requests
+            try:
+                if isasyncgen(source):
+                    await source.aclose()
+                elif isgenerator(source) or iscoroutine(source):
+                    source.close()
+            except Exception:
+                self.logger.exception("error while closing start_requests generator")
             self.start_requests = None
-            aclose = getattr(generator, "aclose", None)
-            if aclose is not None:
-                try:
-                    await aclose()
-                except Exception:
-                    self.logger.exception("error while closing start_requests generator")
 
     async def _monitor_exit(self):
         """所有工作完成后（或被外部停机）唤醒主循环。使用普通 sleep 轮询，避免 wait_for 的取消问题。"""

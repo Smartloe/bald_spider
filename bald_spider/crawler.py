@@ -125,6 +125,7 @@ class CrawlerProcess:
         for crawler in self.crawlers:
             # 记录停机请求，即使 SIGINT 落在 Engine 刚创建、running 尚未置 True 的窗口也不会丢失。
             crawler._shutdown_requested = True
+            crawler._shutdown_reason = "ctrl + c"
             if crawler.engine is not None:
                 crawler.engine.running = False
                 crawler.engine.normal = False

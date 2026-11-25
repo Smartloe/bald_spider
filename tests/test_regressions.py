@@ -823,6 +823,7 @@ def test_shutdown_requested_before_start_is_honored():
 
     assert _TrackingDownloader.closed is True
     assert _SlowSpider.closed_called is True
+    assert crawler.stats.get_value("reason") == "ctrl + c"
 
 
 def test_second_cancellation_still_completes_cleanup():
@@ -1347,12 +1348,13 @@ def test_zero_interval_disables_stats_logger():
 
 class _SyncSubscriberSpider(Spider):
     start_urls = ["http://example.invalid/"]
+    synced = False
 
     async def spider_opened(self):
         self.crawler.subscriber.subscriber(self.sync_receiver, event=item_successful)
 
     def sync_receiver(self, item, spider):
-        raise AssertionError("sync subscriber should never be awaited")
+        type(self).synced = True
 
     async def parse(self, response):
         item = _ChildItem()
@@ -1362,6 +1364,7 @@ class _SyncSubscriberSpider(Spider):
 
 
 def test_sync_subscriber_does_not_stall_processor():
+    _SyncSubscriberSpider.synced = False
     settings = SettingsManager(
         {
             "DOWNLOADER": _NullDownloader,
@@ -1377,6 +1380,7 @@ def test_sync_subscriber_does_not_stall_processor():
     asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
 
     assert crawler.stats.get_value("item_successful_count") == 1
+    assert _SyncSubscriberSpider.synced is False
 
 
 class _StartIterErrorSpider(Spider):
@@ -1404,6 +1408,7 @@ def test_start_requests_error_sets_reason():
     asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
 
     assert crawler.stats.get_value("reason") == "start_requests error"
+    assert crawler.stats.get_value("response_received_count") == 1
 
 
 def test_fractional_interval_starts_stats_logger():
@@ -1462,3 +1467,64 @@ def test_transform_closes_async_generator():
     asyncio.run(scenario())
 
     assert closed == [True]
+
+
+class _CoroutineStartSpider(Spider):
+    start_urls = []
+
+    async def start_requests(self):
+        return [Request("http://example.invalid/")]
+
+    async def parse(self, response):
+        return None
+
+
+def test_coroutine_start_requests_is_awaited():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_CoroutineStartSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("response_received_count") == 1
+
+
+class _RaisingEngine:
+    def __init__(self):
+        self.calls = 0
+
+    async def enqueue_request(self, request):
+        self.calls += 1
+        raise RuntimeError("enqueue-boom")
+
+
+def test_processor_survives_item_processing_exception():
+    crawler = SimpleNamespace(
+        engine=_RaisingEngine(),
+        stats=_RecordingStats(),
+        spider=None,
+        subscriber=Subscriber(),
+    )
+    processor = Processor(crawler)
+
+    async def scenario():
+        await processor.enqueue(Request("http://example.invalid/1"))
+        await processor.enqueue(Request("http://example.invalid/2"))
+        for _ in range(200):
+            if processor.idle():
+                break
+            await asyncio.sleep(0.01)
+        await processor.close()
+
+    asyncio.run(scenario())
+
+    assert crawler.engine.calls == 2
+    assert crawler.stats.get_value("processor_exceptions/RuntimeError") == 2

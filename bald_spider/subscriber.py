@@ -23,6 +23,14 @@ class Subscriber:
             return
         awaitables = []
         for receiver in receivers:
+            call = getattr(receiver, "__call__", None)
+            if not (
+                inspect.iscoroutinefunction(receiver)
+                or inspect.iscoroutinefunction(call)
+            ):
+                # 同步订阅者直接跳过（不执行），避免拖垮 Processor 等调用方。
+                self.logger.error(f"subscriber {receiver!r} must be a coroutine function")
+                continue
             try:
                 result = receiver(*args, **kwargs)
             except Exception as exc:
@@ -32,8 +40,7 @@ class Subscriber:
                 )
                 continue
             if not inspect.isawaitable(result):
-                # 同步订阅者不应影响事件循环；记录后跳过，避免拖垮 Processor 等调用方。
-                self.logger.error(f"subscriber {receiver!r} must be a coroutine function")
+                self.logger.error(f"subscriber {receiver!r} must return an awaitable")
                 continue
             awaitables.append(result)
         if not awaitables:
