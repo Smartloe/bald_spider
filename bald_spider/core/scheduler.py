@@ -37,6 +37,8 @@ class Scheduler:
         return self.request_queue.empty()
 
     async def interval_log(self, interval):
+        # 防御性钳制，避免 0/负数导致忙轮询或 ValueError 使日志任务退出。
+        interval = max(float(interval), 0.1)
         while True:
             last_item_count = self.crawler.stats.get_value("item_successful_count", default=0)
             last_response_count = self.crawler.stats.get_value("response_received_count", default=0)

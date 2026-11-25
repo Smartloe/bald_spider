@@ -104,6 +104,14 @@ class CrawlerProcess:
         self._install_signal_handler()
         try:
             await asyncio.gather(*self._active)
+        except BaseException:
+            # 任一爬虫失败时取消其余兄弟任务，避免进程常驻时后台残留。
+            siblings = [task for task in self._active if not task.done()]
+            for task in siblings:
+                task.cancel()
+            if siblings:
+                await asyncio.gather(*siblings, return_exceptions=True)
+            raise
         finally:
             self._restore_signal_handler()
 

@@ -42,6 +42,7 @@ class Engine:
         self.exit_monitor_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._closed = False
+        self._closing = False
         self._dispatching = 0
         self._cancelled_during_close = False
         self.running = False
@@ -75,15 +76,10 @@ class Engine:
             self.start_requests = spider.start_requests()
             await self._open_spider()
         except BaseException:
-            # 启动阶段失败（含取消）时兜底释放已创建资源，避免会话泄漏。
+            # 启动阶段失败（含取消）时兜底关闭：复用关闭流程，保证资源释放、
+            # spider_closed 与统计收尾，并屏蔽清理期间的再次取消。
             if not self._closed:
-                await self._close_resources()
-                try:
-                    await self.crawler.subscriber.notify(spider_closed)
-                    if self.crawler.stats is not None:
-                        self.crawler.stats.close_spider(self.spider, "startup failed")
-                except Exception:
-                    self.logger.exception("error while cleaning up after startup failure")
+                await self._run_close(cancel_tasks=True)
             raise
 
     async def _open_spider(self):
@@ -91,9 +87,11 @@ class Engine:
         await self.crawler.subscriber.notify(spider_opened)
         # 启动处理器的后台处理任务
         self.processor.start()
-        self.interval_log_task = asyncio.create_task(
-            self.scheduler.interval_log(self.settings.getint("INTERVAL"))
-        )
+        interval = self.settings.getint("INTERVAL")
+        if interval > 0:
+            self.interval_log_task = asyncio.create_task(
+                self.scheduler.interval_log(interval)
+            )
         self.start_requests_task = asyncio.create_task(self._enqueue_start_requests())
         self.exit_monitor_task = asyncio.create_task(self._monitor_exit())
         try:
@@ -245,7 +243,11 @@ class Engine:
             if acquire.done() and not acquire.cancelled() and acquire.exception() is None:
                 self.task_manager.semaphore.release()
             return False
-        return acquire.done() and acquire.exception() is None
+        return (
+        acquire.done()
+        and not acquire.cancelled()
+        and acquire.exception() is None
+    )
 
     async def _fetch(self, request):
         async def _success(_response):
@@ -312,27 +314,31 @@ class Engine:
 
     async def _close_resources(self):
         """释放下载器与后台任务；可重复调用，单步失败不影响其余清理。"""
-        if self._closed:
+        if self._closed or self._closing:
             return
-        self._closed = True
-        if self.interval_log_task is not None and not self.interval_log_task.done():
-            self.interval_log_task.cancel()
-            try:
-                await self.interval_log_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                self.logger.exception("error while cancelling interval log task")
-        if self.processor is not None:
-            try:
-                await self.processor.close()
-            except Exception:
-                self.logger.exception("error while closing processor")
-        if self.downloader is not None:
-            try:
-                await self.downloader.close()
-            except Exception:
-                self.logger.exception("error while closing downloader")
+        self._closing = True
+        try:
+            if self.interval_log_task is not None and not self.interval_log_task.done():
+                self.interval_log_task.cancel()
+                try:
+                    await self.interval_log_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    self.logger.exception("error while cancelling interval log task")
+            if self.processor is not None:
+                try:
+                    await self.processor.close()
+                except Exception:
+                    self.logger.exception("error while closing processor")
+            if self.downloader is not None:
+                try:
+                    await self.downloader.close()
+                except Exception:
+                    self.logger.exception("error while closing downloader")
+            self._closed = True
+        finally:
+            self._closing = False
 
     async def close_spider(self, cancel_tasks=False):
         if self._closed:

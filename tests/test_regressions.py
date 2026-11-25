@@ -603,12 +603,18 @@ def test_stop_interrupts_semaphore_wait():
 
 
 class _BrokenStartSpider(Spider):
+    closed_called = False
+
     def start_requests(self):
         raise RuntimeError("boom-start")
+
+    async def spider_closed(self):
+        type(self).closed_called = True
 
 
 def test_startup_failure_closes_downloader():
     _TrackingDownloader.closed = False
+    _BrokenStartSpider.closed_called = False
     settings = SettingsManager(
         {
             "DOWNLOADER": _TrackingDownloader,
@@ -624,6 +630,7 @@ def test_startup_failure_closes_downloader():
         asyncio.run(crawler.crawl())
 
     assert _TrackingDownloader.closed is True
+    assert _BrokenStartSpider.closed_called is True
 
 
 def test_processor_emits_item_successful_event():
@@ -1279,3 +1286,57 @@ def test_acquire_semaphore_does_not_swallow_outer_cancellation():
             await asyncio.wait_for(task, timeout=5)
 
     asyncio.run(scenario())
+
+
+class _LongDownloader(DownloaderBase):
+    async def download(self, request):
+        await asyncio.sleep(10)
+        return _response(request)
+
+
+class _LongDownloadSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+
+    async def parse(self, response):
+        return None
+
+
+def test_crawler_process_cancels_siblings_on_failure():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _LongDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+
+    async def scenario():
+        process = CrawlerProcess(settings)
+        await process.crawl(_BrokenStartSpider)
+        await process.crawl(_LongDownloadSpider)
+        with pytest.raises(RuntimeError):
+            await asyncio.wait_for(process.start(), timeout=10)
+        return all(task.done() for task in process._active)
+
+    assert asyncio.run(scenario()) is True
+
+
+def test_zero_interval_disables_stats_logger():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 0,
+        }
+    )
+    crawler = Crawler(_SlowSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.engine.interval_log_task is None
