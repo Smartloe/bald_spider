@@ -7,7 +7,7 @@
 
 from typing import List
 from asyncio.exceptions import TimeoutError
-from aiohttp import ClientConnectionError, ClientConnectorError, ClientResponseError, ClientTimeout
+from aiohttp import ClientConnectionError, ClientConnectorError, ClientResponseError
 from aiohttp.client_exceptions import ClientPayloadError, ClientConnectorSSLError
 from httpx import (
     ConnectError,
@@ -23,7 +23,6 @@ from bald_spider.utils.log import get_logger
 
 _retry_exceptions = [
     ClientConnectionError,
-    ClientTimeout,
     ClientConnectorSSLError,
     ClientResponseError,
     RemoteProtocolError,
@@ -48,13 +47,14 @@ class Retry:
         max_retry_times: int,
         retry_exceptions: List,
         stats: StatsCollector,
+        log_level=None,
     ):
         self.retry_http_codes = retry_http_codes
         self.ignore_http_codes = ignore_http_codes
         self.max_retry_times = max_retry_times
         self.retry_exceptions = tuple(retry_exceptions + _retry_exceptions)
         self.stats = stats
-        self.logger = get_logger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__, log_level)
 
     @classmethod
     def create_instance(cls, crawler):
@@ -64,6 +64,7 @@ class Retry:
             max_retry_times=crawler.settings.getint("MAX_RETRY_TIMES"),
             retry_exceptions=crawler.settings.getlist("RETRY_EXCEPTIONS"),
             stats=crawler.stats,
+            log_level=crawler.settings.get("LOG_LEVEL"),
         )
         return o
 

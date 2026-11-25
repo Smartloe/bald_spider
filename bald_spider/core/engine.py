@@ -56,9 +56,10 @@ class Engine:
         return downloader_cls
 
     async def start_spider(self, spider):
-        shutdown_requested = getattr(self.crawler, "_shutdown_requested", False)
-        self.running = not shutdown_requested
-        if shutdown_requested:
+        # 先置 True 再检查停机标记，避免 SIGINT 恰好落在读取与赋值之间被覆盖。
+        self.running = True
+        if getattr(self.crawler, "_shutdown_requested", False):
+            self.running = False
             self.normal = False
         self.logger.info(f"info bald_spider started.(project_name:{self.settings.get('PROJECT_NAME')})")
         self.spider = spider
@@ -234,13 +235,12 @@ class Engine:
                 self.task_manager.semaphore.release()
             raise
         finally:
-            for task in (acquire, stop):
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, Exception):
-                        pass
+            pending = [task for task in (acquire, stop) if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                # 用 gather 等待被取消的子任务：它不会吞掉外层任务的 CancelledError。
+                await asyncio.gather(*pending, return_exceptions=True)
         if self._stop_event.is_set() or not self.running:
             if acquire.done() and not acquire.cancelled() and acquire.exception() is None:
                 self.task_manager.semaphore.release()

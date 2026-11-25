@@ -248,7 +248,7 @@ class CallbackSpider(Spider):
         yield item  # 回调只接受 Request / Item
 ```
 
-> 回调的返回值必须是生成器 / 异步生成器；返回其他类型会被包装为 `TransformTypeError` 并记录到 `spider_exceptions/*` 统计，不会静默丢弃。
+> 回调的返回值必须是生成器 / 异步生成器；返回其他类型会被包装为 `TransformTypeError` 并记录到 `spider_exceptions/*` 统计，不会静默丢弃。返回 `None` 或空列表表示本次没有产出。
 
 `start_requests` 同样支持同步或异步生成器：
 
@@ -512,6 +512,7 @@ settings.getdict("DEFAULT_HEADERS", {}) # 字典
 
 - **请求去重尚未实现**：同一 URL 会被重复抓取（`Engine._schedule_request` 中为 TODO）。
 - **背压可配置**：调度队列默认上限 1000（`SCHEDULER_QUEUE_SIZE`），超限时生产者会等待；设为 `0` 可关闭限制。
+- **处理器队列不设上限**：无限解析输出会持续占用内存并长期持有并发许可；背压仅作用于调度队列。
 - **无数据管道与持久化**：`Item` 目前只做计数与事件通知，需自行处理存储。
 - **无分布式支持与 Web 界面**：属于后续规划。
 - `HTTPXDownloader` 在设置 per-request `proxy` 时会退化为一次性 client。

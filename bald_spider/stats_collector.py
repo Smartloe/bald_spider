@@ -8,7 +8,7 @@ class StatsCollector:
         self.crawler = crawler
         self._dump = self.crawler.settings.getbool("STATS_DUMP")
         self._stats = {}
-        self.log = get_logger(self.__class__.__name__, "INFO")
+        self.log = get_logger(self.__class__.__name__, self.crawler.settings.get("LOG_LEVEL"))
 
     def inc_value(self, key, count=1, start=0):
         self._stats[key] = self._stats.get(key, start) + count

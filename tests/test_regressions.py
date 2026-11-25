@@ -815,17 +815,6 @@ def test_shutdown_requested_before_start_is_honored():
     assert _SlowSpider.closed_called is True
 
 
-class _SlowCloseDownloader(DownloaderBase):
-    closed = False
-
-    async def download(self, request):
-        return _response(request)
-
-    async def close(self):
-        await asyncio.sleep(0.2)
-        type(self).closed = True
-
-
 def test_second_cancellation_still_completes_cleanup():
     _SlowCloseDownloader.closed = False
     _BusySpider.closed_called = False
@@ -1249,3 +1238,44 @@ def test_engine_logger_uses_configured_log_level():
     engine = Engine(crawler)
 
     assert engine.logger.level == logging.CRITICAL
+
+
+class _SlowStopEvent:
+    def __init__(self):
+        self._set = False
+        self.cancelled = None
+
+    def is_set(self):
+        return self._set
+
+    def set(self):
+        self._set = True
+
+    async def wait(self):
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            await asyncio.sleep(0.2)
+
+
+def test_acquire_semaphore_does_not_swallow_outer_cancellation():
+    engine = Engine(_FakeCrawler())
+
+    async def scenario():
+        stop_event = _SlowStopEvent()
+        stop_event.cancelled = asyncio.Event()
+        engine._stop_event = stop_event
+        engine.running = True
+        engine.task_manager.semaphore = asyncio.Semaphore(0)
+
+        task = asyncio.create_task(engine._acquire_semaphore())
+        await asyncio.sleep(0)
+        engine.task_manager.semaphore.release()
+        # 等到 finally 已取消 stop 任务并正在等待其结束
+        await stop_event.cancelled.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(scenario())
