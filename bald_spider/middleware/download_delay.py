@@ -10,7 +10,11 @@ class DownloadDelay:
         if not self.delay:
             raise NotConfigured
         self.randomness = settings.getbool("RANDOMNESS")
-        self.floor, self.upper = settings.getlist("RANDEOM_RANGE")
+        if "RANDEOM_RANGE" in settings:
+            # 兼容旧拼写；显式设置时优先。
+            self.floor, self.upper = settings.getlist("RANDEOM_RANGE")
+        else:
+            self.floor, self.upper = settings.getlist("RANDOM_RANGE")
         self.logger = get_logger(self.__class__.__name__, log_level)
 
     @classmethod

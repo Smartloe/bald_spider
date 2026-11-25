@@ -29,7 +29,11 @@ name = "bald-spider"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "aiohttp>=3.13.2",
+    "httpx>=0.28.1",
+    "parsel>=1.10.0",
     "requests>=2.32.5",
+    "ujson>=5.11.0",
 ]
 
 [project.optional-dependencies]
@@ -58,7 +62,7 @@ dev = [
 
 ### 4. 可扩展性
 - 模块化设计
-- 插件系统支持
+- 中间件机制与可替换组件
 - 接口抽象清晰
 
 ## 📊 性能优化
@@ -90,7 +94,7 @@ async def cleanup():
 
 ### 网络优化
 ```python
-# 连接池复用（待实现）
+# aiohttp / httpx 下载器均支持连接复用（USE_SESSION=True）
 async def create_client():
     return httpx.AsyncClient(
         limits=httpx.Limits(
@@ -104,19 +108,23 @@ async def create_client():
 
 ### 单元测试
 ```python
-@pytest.mark.asyncio
-async def test_request_creation():
+def test_request_creation():
     request = Request(url="https://example.com")
     assert request.url == "https://example.com"
 ```
 
 ### 集成测试
 ```python
-@pytest.mark.asyncio
-async def test_spider_integration():
-    spider = TestSpider()
-    engine = Engine()
-    await engine.start_spider(spider)
+import asyncio
+
+from bald_spider.crawler import Crawler
+from bald_spider.settings.settings_manager import SettingsManager
+
+
+def test_spider_integration():
+    settings = SettingsManager({"LOG_LEVEL": "CRITICAL"})
+    crawler = Crawler(TestSpider, settings)
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
     # 验证结果
 ```
 
@@ -152,8 +160,8 @@ mypy bald_spider/
 # 运行测试
 uv run pytest
 
-# 带覆盖率的测试
-uv run pytest --cov=bald_spider
+# 详细输出
+uv run pytest -v
 ```
 
 ## 📋 代码规范
@@ -294,10 +302,10 @@ class SafeItem:
 ## 📈 未来规划
 
 ### 短期目标
-- [ ] 集成真实 HTTP 客户端（httpx/aiohttp）
+- [x] 集成真实 HTTP 客户端（httpx/aiohttp）
 - [ ] 实现请求去重机制
-- [ ] 添加中间件系统
-- [ ] 完善错误处理和重试机制
+- [x] 添加中间件系统
+- [x] 完善错误处理和重试机制
 
 ### 中期目标
 - [ ] 实现数据管道系统

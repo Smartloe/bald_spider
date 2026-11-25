@@ -4,18 +4,27 @@ defult config
 
 CONCURRENCY = 16
 LOG_LEVEL = "INFO"
+PROJECT_NAME = ""
 VERIFY_SSL = True
 REQUEST_TIMEOUT = 60
 USE_SESSION = True
 DOWNLOADER = "bald_spider.core.downloader.aiohttp_downloder.AioDownloader"
 INTERVAL = 5
 STATS_DUMP = True
+# 队列上限（0 表示不限制）；用于为无限生产者提供背压
+SCHEDULER_QUEUE_SIZE = 1000
+PROCESSOR_QUEUE_SIZE = 1000
+# middlewares
+MIDDLEWARES = []
+USER_AGENT = ""
+DEFAULT_HEADERS = {}
 # download delay
 DOWNLOAD_DELAY = 0
 RANDOMNESS = True
-RANDEOM_RANGE = (0.75, 1.25)
+RANDOM_RANGE = (0.75, 1.25)
 # retry
 RETRY_HTTP_CODES = [408, 429, 500, 503, 504, 522, 524]
 IGNORE_HTTP_CODES = [403, 404]
 MAX_RETRY_TIMES = 2
+RETRY_EXCEPTIONS = []
 ALLOWED_CODES = []

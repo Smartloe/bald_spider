@@ -344,7 +344,7 @@ class CustomMiddleware(BaseMiddleware):
         return response
 
     async def process_exception(self, request, exception, spider):
-        # 返回 Request/Response 表示已处理；返回 None 交给后续中间件
+        # 返回 True 表示已处理；返回 False / None 交给后续中间件
         return None
 ```
 
@@ -430,18 +430,25 @@ python run.py
 |---|---|---|
 | `CONCURRENCY` | `16` | 最大并发任务数 |
 | `LOG_LEVEL` | `"INFO"` | 日志级别 |
+| `PROJECT_NAME` | `""` | 项目名（用于日志） |
 | `VERIFY_SSL` | `True` | 是否校验 SSL 证书 |
 | `REQUEST_TIMEOUT` | `60` | 请求超时（秒） |
 | `USE_SESSION` | `True` | 是否复用 HTTP 连接 |
 | `DOWNLOADER` | `AioDownloader` | 下载器类路径 |
 | `INTERVAL` | `5` | 统计日志间隔（秒） |
 | `STATS_DUMP` | `True` | 结束时打印统计 |
+| `SCHEDULER_QUEUE_SIZE` | `1000` | 调度队列上限，`0` 表示不限制 |
+| `PROCESSOR_QUEUE_SIZE` | `1000` | 处理器队列上限，`0` 表示不限制 |
+| `MIDDLEWARES` | `[]` | 启用的中间件；默认为空 |
+| `USER_AGENT` | `""` | 默认 User-Agent（配合 `DefaultHeader`） |
+| `DEFAULT_HEADERS` | `{}` | 默认请求头（配合 `DefaultHeader`） |
 | `DOWNLOAD_DELAY` | `0` | 请求间隔（秒），`0` 表示不启用延迟中间件 |
 | `RANDOMNESS` | `True` | 延迟是否随机波动 |
-| `RANDEOM_RANGE` | `(0.75, 1.25)` | 随机延迟范围系数 |
+| `RANDOM_RANGE` | `(0.75, 1.25)` | 随机延迟范围系数（旧拼写 `RANDEOM_RANGE` 仍兼容） |
 | `RETRY_HTTP_CODES` | `[408, 429, 500, 503, 504, 522, 524]` | 触发重试的状态码 |
 | `IGNORE_HTTP_CODES` | `[403, 404]` | 不重试的状态码 |
 | `MAX_RETRY_TIMES` | `2` | 最大重试次数 |
+| `RETRY_EXCEPTIONS` | `[]` | 额外需要重试的异常类型 |
 | `ALLOWED_CODES` | `[]` | 额外允许的状态码 |
 
 > 默认配置**不启用任何中间件**。需要重试、默认请求头、下载延迟等能力时，请在 `settings.py` 中显式配置 `MIDDLEWARES`。
@@ -495,7 +502,7 @@ settings.getdict("DEFAULT_HEADERS", {}) # 字典
 ## ⚠️ 已知限制
 
 - **请求去重尚未实现**：同一 URL 会被重复抓取（`Engine._schedule_request` 中为 TODO）。
-- **无背压**：无限 `start_requests` / 无限解析输出会使调度队列持续增长，请自行控制产出速度。
+- **背压可配置**：调度器与处理器队列默认上限 1000（`SCHEDULER_QUEUE_SIZE` / `PROCESSOR_QUEUE_SIZE`），超限时生产者会等待；设为 `0` 可关闭限制。无限生产者下请保持有界。
 - **无数据管道与持久化**：`Item` 目前只做计数与事件通知，需自行处理存储。
 - **无分布式支持与 Web 界面**：属于后续规划。
 - `HTTPXDownloader` 在设置 per-request `proxy` 时会退化为一次性 client。

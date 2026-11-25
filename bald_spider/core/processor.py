@@ -8,7 +8,9 @@ from bald_spider.utils.log import get_logger
 class Processor:
     def __init__(self, crawler):
         self.crawler = crawler
-        self.queue: Queue = Queue()
+        settings = getattr(crawler, "settings", None)
+        maxsize = settings.getint("PROCESSOR_QUEUE_SIZE") if settings is not None else 0
+        self.queue: Queue = Queue(maxsize=maxsize)
         self.logger = get_logger(self.__class__.__name__)
         self._processing = False
         self._task: asyncio.Task | None = None

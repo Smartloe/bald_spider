@@ -53,7 +53,10 @@ class Engine:
         return downloader_cls
 
     async def start_spider(self, spider):
-        self.running = True
+        shutdown_requested = getattr(self.crawler, "_shutdown_requested", False)
+        self.running = not shutdown_requested
+        if shutdown_requested:
+            self.normal = False
         self.logger.info(f"info bald_spider started.(project_name:{self.settings.get('PROJECT_NAME')})")
         self.spider = spider
         try:
@@ -169,9 +172,19 @@ class Engine:
         finally:
             self.running = False
             self._stop_event.set()
-            await self.close_spider(cancel_tasks=cancelled or not self.normal)
+            await self._run_close(cancel_tasks=cancelled or not self.normal)
         if cancelled:
             raise asyncio.CancelledError
+
+    async def _run_close(self, cancel_tasks):
+        """执行关闭流程；二次取消时继续等待清理完成，避免下载器/事件未收尾。"""
+        close_task = asyncio.create_task(self.close_spider(cancel_tasks=cancel_tasks))
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                continue
+        return close_task.result()
 
     async def _crawl(self, request):
         # 实现并发

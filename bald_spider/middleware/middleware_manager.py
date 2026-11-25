@@ -67,10 +67,14 @@ class MiddlewareManager:
                 continue
             if isinstance(response, (Request, Response)):
                 return response
-            if response:
+            if response is True:
+                # 仅 True 表示“异常已处理”；False 视为未处理，继续交给后续中间件。
                 break
+            if response is False:
+                continue
             raise InvalidOutputError(
-                f"middleware {method.__qualname__} must return Request, Response or None,got {type(response).__name__}"
+                f"middleware {method.__qualname__} must return Request, Response, True, False or None,"
+                f"got {type(response).__name__}"
             )
         else:
             raise exception
@@ -87,8 +91,10 @@ class MiddlewareManager:
             self._stats.inc_value(f"download_error/{exc.__class__.__name__}")
             response = await self._process_exception(request, exc)
         else:
-            await self.crawler.subscriber.notify(response_received, response, self.crawler.spider)
-            self.crawler.stats.inc_value("response_received_count")
+            # 只有真正拿到 Response 才算一次响应；process_request 返回 Request 属于短路/重新入队。
+            if isinstance(response, Response):
+                await self.crawler.subscriber.notify(response_received, response, self.crawler.spider)
+                self.crawler.stats.inc_value("response_received_count")
         if isinstance(response, Response):
             response = await self._process_response(request, response)
         if isinstance(response, Request):

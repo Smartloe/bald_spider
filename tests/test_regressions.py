@@ -17,11 +17,12 @@ from bald_spider.core.downloader.aiohttp_downloder import AioDownloader
 from bald_spider.core.downloader.httpx_downloader import HTTPXDownloader
 from bald_spider.core.processor import Processor
 from bald_spider.crawler import Crawler
-from bald_spider.event import item_successful
-from bald_spider.exceptions import IgnoreRequest
+from bald_spider.event import item_successful, response_received
+from bald_spider.exceptions import IgnoreRequest, InvalidOutputError
 from bald_spider.items import Field
 from bald_spider.items.items import Item
 from bald_spider.middleware.default_header import DefaultHeader
+from bald_spider.middleware.download_delay import DownloadDelay
 from bald_spider.middleware.middleware_manager import MiddlewareManager
 from bald_spider.middleware.request_ignore import RequestIngore
 from bald_spider.middleware.response_filter import ResponseFilter
@@ -116,6 +117,17 @@ class _FakeDownloader:
         return None
 
 
+class _RecordingStats:
+    def __init__(self):
+        self.values = {}
+
+    def inc_value(self, key, count=1, start=0):
+        self.values[key] = self.values.get(key, start) + count
+
+    def get_value(self, key, default=None):
+        return self.values.get(key, default)
+
+
 class _FakeEngine:
     def __init__(self):
         self.downloader = _FakeDownloader()
@@ -129,7 +141,7 @@ class _FakeCrawler:
     def __init__(self):
         self.settings = SettingsManager({"MIDDLEWARES": []})
         self.engine = _FakeEngine()
-        self.stats = SimpleNamespace(inc_value=lambda *args, **kwargs: None)
+        self.stats = _RecordingStats()
         self.spider = None
         self.subscriber = Subscriber()
 
@@ -727,3 +739,165 @@ def test_saturated_semaphore_does_not_drop_requests():
 
     assert crawler.stats.get_value("response_received_count") == 2
     assert crawler.stats.get_value("request_scheduler_count") == 2
+
+
+def test_short_circuit_request_is_not_counted_as_response():
+    crawler = _FakeCrawler()
+    received = []
+
+    async def on_received(response, spider):
+        received.append(response)
+
+    crawler.subscriber.subscriber(on_received, event=response_received)
+    manager = MiddlewareManager(crawler)
+    request = Request("http://original.example.com")
+
+    async def process_request(request):
+        return request
+
+    manager._process_request = process_request
+
+    asyncio.run(manager.download(request))
+
+    assert crawler.engine.enqueued == [request]
+    assert crawler.stats.get_value("response_received_count") is None
+    assert received == []
+
+
+def test_process_exception_only_true_means_handled():
+    manager = MiddlewareManager(_FakeCrawler())
+    request = Request("http://example.com")
+
+    async def returns_false(request, exception, spider):
+        return False
+
+    async def returns_true(request, exception, spider):
+        return True
+
+    async def returns_string(request, exception, spider):
+        return "handled"
+
+    manager.methods["process_exception"] = [returns_false]
+    with pytest.raises(ValueError):
+        asyncio.run(manager._process_exception(request, ValueError("boom")))
+
+    manager.methods["process_exception"] = [returns_true]
+    assert asyncio.run(manager._process_exception(request, ValueError("boom"))) is None
+
+    manager.methods["process_exception"] = [returns_string]
+    with pytest.raises(InvalidOutputError):
+        asyncio.run(manager._process_exception(request, ValueError("boom")))
+
+
+def test_shutdown_requested_before_start_is_honored():
+    _TrackingDownloader.closed = False
+    _SlowSpider.closed_called = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _TrackingDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_SlowSpider, settings)
+    crawler._shutdown_requested = True
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=5))
+
+    assert _TrackingDownloader.closed is True
+    assert _SlowSpider.closed_called is True
+
+
+class _SlowCloseDownloader(DownloaderBase):
+    closed = False
+
+    async def download(self, request):
+        return _response(request)
+
+    async def close(self):
+        await asyncio.sleep(0.2)
+        type(self).closed = True
+
+
+def test_second_cancellation_still_completes_cleanup():
+    _SlowCloseDownloader.closed = False
+    _BusySpider.closed_called = False
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _SlowCloseDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_BusySpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=3)
+
+    asyncio.run(scenario())
+
+    assert _SlowCloseDownloader.closed is True
+    assert _BusySpider.closed_called is True
+
+
+def test_queue_limits_apply_backpressure_to_endless_producer():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _ShortSleepDownloader,
+            "SCHEDULER_QUEUE_SIZE": 2,
+            "PROCESSOR_QUEUE_SIZE": 2,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 2,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_EndlessStartSpider, settings)
+
+    async def scenario():
+        task = asyncio.create_task(crawler.crawl())
+        await asyncio.sleep(0.3)
+        sizes = (len(crawler.engine.scheduler), len(crawler.engine.processor))
+        crawler.engine.running = False
+        crawler.engine.normal = False
+        await asyncio.wait_for(task, timeout=3)
+        return sizes
+
+    scheduler_size, processor_size = asyncio.run(scenario())
+
+    assert scheduler_size <= 2
+    assert processor_size <= 2
+
+
+def test_response_text_handles_content_type_case_insensitively():
+    request = Request("http://example.com", encoding="utf-8")
+    response = _response(
+        request,
+        headers={"Content-TYPE": "text/html; charset=gbk"},
+        body="中文内容".encode("gbk"),
+    )
+
+    assert response.text == "中文内容"
+
+
+def test_download_delay_supports_new_and_legacy_range_keys():
+    new = DownloadDelay(SettingsManager({"DOWNLOAD_DELAY": 1}), "INFO")
+    assert (new.floor, new.upper) == (0.75, 1.25)
+
+    legacy = DownloadDelay(
+        SettingsManager({"DOWNLOAD_DELAY": 1, "RANDEOM_RANGE": (2, 3)}), "INFO"
+    )
+    assert (legacy.floor, legacy.upper) == (2, 3)

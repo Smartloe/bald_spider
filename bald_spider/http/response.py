@@ -34,7 +34,11 @@ class Response:
             self._text_cache = self.body.decode(self.encoding)
         except UnicodeDecodeError:
             _encoding_re = re.compile(r"charset=([\w-]+)", flags=re.I)
-            _encoding_string = self.headers.get("Content-Type", "") or self.headers.get("content-type", "")
+            _encoding_string = ""
+            for header, value in self.headers.items():
+                if header.lower() == "content-type":
+                    _encoding_string = value or ""
+                    break
             _encoding = _encoding_re.search(_encoding_string)
             if not _encoding:
                 raise DecodeError(f"can not decode {self.body} with {self.encoding}")

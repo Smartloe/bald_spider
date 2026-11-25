@@ -14,7 +14,9 @@ class Scheduler:
         self.logger = get_logger(self.__class__.__name__, log_level=crawler.settings.get("LOG_LEVEL"))
 
     def open(self):
-        self.request_queue = SpoderPriorityQueue()
+        # 有界队列为生产者提供背压；0 表示不限制。
+        maxsize = self.crawler.settings.getint("SCHEDULER_QUEUE_SIZE")
+        self.request_queue = SpoderPriorityQueue(maxsize=maxsize)
 
     async def next_request(self):
         # 阻塞等待，由 Engine 在空闲时投放关闭哨兵唤醒，避免轮询与取消问题。

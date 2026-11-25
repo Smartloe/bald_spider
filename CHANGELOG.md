@@ -2,6 +2,25 @@
 
 本文档记录了 Bald Spider 的重要变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [Unreleased]
+
+### 🐛 修复
+- 修复 `DefaultHeader` 导致请求无限重新入队
+- 修复 `Retry` / `ResponseFilter` 读取不存在的 `Response.status`
+- 新增 `bald_spider.main`，修复测试无法收集
+- 确保 `spider_opened` / `spider_closed` 在正确时机执行
+- 修复异步回调返回值被静默丢弃、重定向后 `Response.url` 错位
+- 修复取消/停机时的请求丢失、主循环阻塞与资源未关闭
+- 修复 `Response.text` 非 UTF-8 解码、优先级方向、`Item` 字段继承
+
+### 🚀 改进
+- 支持异步生成器形式的 `start_requests` 与事件订阅
+- HTTPX 下载器复用连接、跟随重定向并支持关闭
+- 有界队列提供背压（`SCHEDULER_QUEUE_SIZE` / `PROCESSOR_QUEUE_SIZE`）
+- 中间件 `process_exception` 语义收紧：仅 `True` 表示已处理
+- 可中断信号量，`Ctrl+C` 可及时退出
+- 新增 32 项回归测试
+
 ## [0.1.0] - 2024-11-24
 
 ### 🎉 首次发布

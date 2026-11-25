@@ -23,6 +23,7 @@ class Crawler:
         self.engine: Engine | None = None
         self.stats: StatsCollector | None = None
         self.subscriber: Subscriber | None = None
+        self._shutdown_requested = False
 
     async def crawl(self):
         self.subscriber = self._create_subscriber()
@@ -91,6 +92,8 @@ class CrawlerProcess:
 
     def _shutdown(self, signum, frame):
         for crawler in self.crawlers:
+            # 记录停机请求，即使 SIGINT 落在 Engine 刚创建、running 尚未置 True 的窗口也不会丢失。
+            crawler._shutdown_requested = True
             if crawler.engine is not None:
                 crawler.engine.running = False
                 crawler.engine.normal = False
