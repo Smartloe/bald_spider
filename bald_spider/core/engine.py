@@ -3,7 +3,7 @@ from bald_spider.core.processor import Processor
 from bald_spider.core.scheduler import Scheduler
 from typing import Callable
 import asyncio
-from bald_spider.event import spider_closed, spider_error, spider_opened
+from bald_spider.event import spider_error, spider_opened
 from bald_spider.exceptions import OutputError
 from bald_spider.http.request import Request
 from bald_spider.items.items import Item
@@ -45,6 +45,7 @@ class Engine:
         self._closing = False
         self._dispatching = 0
         self._cancelled_during_close = False
+        self.close_reason = "finished"
         self.running = False
         self.normal = True
 
@@ -79,6 +80,8 @@ class Engine:
             # 启动阶段失败（含取消）时兜底关闭：复用关闭流程，保证资源释放、
             # spider_closed 与统计收尾，并屏蔽清理期间的再次取消。
             if not self._closed:
+                if self.close_reason == "finished":
+                    self.close_reason = "startup failed"
                 await self._run_close(cancel_tasks=True)
             raise
 
@@ -87,7 +90,7 @@ class Engine:
         await self.crawler.subscriber.notify(spider_opened)
         # 启动处理器的后台处理任务
         self.processor.start()
-        interval = self.settings.getint("INTERVAL")
+        interval = self.settings.getfloat("INTERVAL")
         if interval > 0:
             self.interval_log_task = asyncio.create_task(
                 self.scheduler.interval_log(interval)
@@ -133,10 +136,18 @@ class Engine:
                         # 用户可能返回无限生成器；定期让出事件循环，保证取消/停机可生效。
                         await asyncio.sleep(0)
         except Exception as exc:
+            self.close_reason = "start_requests error"
             self.logger.error(f"Error during start_requests: {exc}", exc_info=True)
             await self.crawler.subscriber.notify(spider_error, exc, self.spider)
         finally:
+            generator = self.start_requests
             self.start_requests = None
+            aclose = getattr(generator, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    self.logger.exception("error while closing start_requests generator")
 
     async def _monitor_exit(self):
         """所有工作完成后（或被外部停机）唤醒主循环。使用普通 sleep 轮询，避免 wait_for 的取消问题。"""
@@ -171,6 +182,7 @@ class Engine:
         except asyncio.CancelledError:
             # 取消时仍要完成资源清理与关闭事件，随后再向上传播。
             cancelled = True
+            self.close_reason = "cancelled"
         finally:
             self.running = False
             self._stop_event.set()
@@ -244,10 +256,10 @@ class Engine:
                 self.task_manager.semaphore.release()
             return False
         return (
-        acquire.done()
-        and not acquire.cancelled()
-        and acquire.exception() is None
-    )
+            acquire.done()
+            and not acquire.cancelled()
+            and acquire.exception() is None
+        )
 
     async def _fetch(self, request):
         async def _success(_response):
@@ -288,18 +300,27 @@ class Engine:
 
     async def _handle_spider_output(self, outputs):
         count = 0
-        async for spider_output in outputs:
-            if isinstance(spider_output, (Request, Item)):
-                await self.processor.enqueue(spider_output)
-            elif isinstance(spider_output, Exception):
-                await self.crawler.subscriber.notify(spider_error, spider_output, self.spider)
-                raise spider_output
-            else:
-                raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
-            count += 1
-            if count % 100 == 0:
-                # 用户可能返回无限同步生成器；定期让出事件循环，保证取消与超时能生效。
-                await asyncio.sleep(0)
+        try:
+            async for spider_output in outputs:
+                if isinstance(spider_output, (Request, Item)):
+                    await self.processor.enqueue(spider_output)
+                elif isinstance(spider_output, Exception):
+                    await self.crawler.subscriber.notify(spider_error, spider_output, self.spider)
+                    raise spider_output
+                else:
+                    raise OutputError(f"{type(self.spider)} must return `Request` or `Item`")
+                count += 1
+                if count % 100 == 0:
+                    # 用户可能返回无限同步生成器；定期让出事件循环，保证取消与超时能生效。
+                    await asyncio.sleep(0)
+        finally:
+            # 提前退出时显式关闭异步生成器，不依赖 GC。
+            aclose = getattr(outputs, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    self.logger.exception("error while closing spider output generator")
 
     async def _exit(self):
         if (
@@ -356,9 +377,4 @@ class Engine:
                     exc_info=(type(result), result, result.__traceback__),
                 )
         await self._close_resources()
-        if self.normal:
-            await self.crawler.close()
-        else:
-            # ctrl+c 等非正常关闭：补发关闭事件并写入统计（close_spider 已做幂等保护）。
-            await self.crawler.subscriber.notify(spider_closed)
-            self.crawler.stats.close_spider(self.spider, "shutdown")
+        await self.crawler.close(self.close_reason)

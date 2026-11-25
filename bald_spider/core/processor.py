@@ -42,12 +42,22 @@ class Processor:
         try:
             while len(self) > 0:
                 result = await self.queue.get()
-                if isinstance(result, Request):
-                    await self.crawler.engine.enqueue_request(result)
-                else:
-                    assert isinstance(result, Item)
-                    await self._process_item(result)
-                self.queue.task_done()
+                try:
+                    if isinstance(result, Request):
+                        await self.crawler.engine.enqueue_request(result)
+                    else:
+                        assert isinstance(result, Item)
+                        await self._process_item(result)
+                except Exception as exc:
+                    stats = getattr(self.crawler, "stats", None)
+                    if stats is not None:
+                        stats.inc_value(f"processor_exceptions/{exc.__class__.__name__}")
+                    self.logger.error(
+                        f"error while processing {type(result).__name__}: {exc.__class__.__name__}: {exc}",
+                        exc_info=(type(exc), exc, exc.__traceback__),
+                    )
+                finally:
+                    self.queue.task_done()
         finally:
             self._processing = False
             # 关闭处理循环与 enqueue 之间的竞态：若期间又有新元素，重新拉起处理任务。

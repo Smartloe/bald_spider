@@ -2,6 +2,7 @@ from collections import defaultdict
 from collections.abc import Coroutine
 from typing import Callable, Any
 import asyncio
+import inspect
 from bald_spider.utils.log import get_logger
 
 
@@ -20,9 +21,24 @@ class Subscriber:
         receivers = list(self._subscriber[event])
         if not receivers:
             return
-        results = await asyncio.gather(
-            *(receiver(*args, **kwargs) for receiver in receivers), return_exceptions=True
-        )
+        awaitables = []
+        for receiver in receivers:
+            try:
+                result = receiver(*args, **kwargs)
+            except Exception as exc:
+                self.logger.error(
+                    f"subscriber {receiver!r} raised {exc.__class__.__name__}: {exc}",
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
+                continue
+            if not inspect.isawaitable(result):
+                # 同步订阅者不应影响事件循环；记录后跳过，避免拖垮 Processor 等调用方。
+                self.logger.error(f"subscriber {receiver!r} must be a coroutine function")
+                continue
+            awaitables.append(result)
+        if not awaitables:
+            return
+        results = await asyncio.gather(*awaitables, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
                 self.logger.error(

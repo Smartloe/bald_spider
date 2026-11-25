@@ -34,6 +34,7 @@ from bald_spider.stats_collector import StatsCollector
 from bald_spider.subscriber import Subscriber
 from bald_spider.task_manager import TaskManager
 from bald_spider.utils.pqueue import SpoderPriorityQueue
+from bald_spider.utils.spider import transform
 
 
 def _response(request, status_code=200, headers=None, body=b""):
@@ -444,6 +445,7 @@ def test_cancellation_runs_cleanup_and_spider_closed():
 
     assert _TrackingDownloader.closed is True
     assert _BusySpider.closed_called is True
+    assert crawler.stats.get_value("reason") == "cancelled"
 
 
 class _SlowSpider(Spider):
@@ -631,6 +633,7 @@ def test_startup_failure_closes_downloader():
 
     assert _TrackingDownloader.closed is True
     assert _BrokenStartSpider.closed_called is True
+    assert crawler.stats.get_value("reason") == "startup failed"
 
 
 def test_processor_emits_item_successful_event():
@@ -1340,3 +1343,122 @@ def test_zero_interval_disables_stats_logger():
     asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
 
     assert crawler.engine.interval_log_task is None
+
+
+class _SyncSubscriberSpider(Spider):
+    start_urls = ["http://example.invalid/"]
+
+    async def spider_opened(self):
+        self.crawler.subscriber.subscriber(self.sync_receiver, event=item_successful)
+
+    def sync_receiver(self, item, spider):
+        raise AssertionError("sync subscriber should never be awaited")
+
+    async def parse(self, response):
+        item = _ChildItem()
+        item["url"] = "http://example.invalid/a"
+        item["title"] = "title"
+        yield item
+
+
+def test_sync_subscriber_does_not_stall_processor():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_SyncSubscriberSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("item_successful_count") == 1
+
+
+class _StartIterErrorSpider(Spider):
+    def start_requests(self):
+        yield Request("http://example.invalid/")
+        raise RuntimeError("iter-boom")
+
+    async def parse(self, response):
+        return None
+
+
+def test_start_requests_error_sets_reason():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 100,
+        }
+    )
+    crawler = Crawler(_StartIterErrorSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.stats.get_value("reason") == "start_requests error"
+
+
+def test_fractional_interval_starts_stats_logger():
+    settings = SettingsManager(
+        {
+            "DOWNLOADER": _NullDownloader,
+            "LOG_LEVEL": "CRITICAL",
+            "STATS_DUMP": False,
+            "REQUEST_TIMEOUT": 1,
+            "CONCURRENCY": 1,
+            "INTERVAL": 0.5,
+        }
+    )
+    crawler = Crawler(_SlowSpider, settings)
+
+    asyncio.run(asyncio.wait_for(crawler.crawl(), timeout=10))
+
+    assert crawler.engine.interval_log_task is not None
+
+
+def test_transform_closes_sync_generator():
+    closed = []
+
+    def generator():
+        try:
+            yield 1
+        finally:
+            closed.append(True)
+
+    async def scenario():
+        outputs = transform(generator())
+        async for _ in outputs:
+            break
+        await outputs.aclose()
+
+    asyncio.run(scenario())
+
+    assert closed == [True]
+
+
+def test_transform_closes_async_generator():
+    closed = []
+
+    async def generator():
+        try:
+            yield 1
+        finally:
+            closed.append(True)
+
+    async def scenario():
+        outputs = transform(generator())
+        async for _ in outputs:
+            break
+        await outputs.aclose()
+
+    asyncio.run(scenario())
+
+    assert closed == [True]

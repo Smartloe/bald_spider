@@ -8,7 +8,7 @@ from bald_spider.event import spider_error
 
 class BaiduSpider(Spider):
     start_urls = ["https://www.baidu.com", "https://www.baidu.com"]
-    headers = {
+    default_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
     }
 

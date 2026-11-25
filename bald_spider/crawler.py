@@ -128,6 +128,7 @@ class CrawlerProcess:
             if crawler.engine is not None:
                 crawler.engine.running = False
                 crawler.engine.normal = False
+                crawler.engine.close_reason = "ctrl + c"
             if crawler.stats is not None and crawler.spider is not None:
                 crawler.stats.close_spider(crawler.spider, "ctrl + c")
         logger.warning(f"spiders received `ctrl + c` signal, closed.")
